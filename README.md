@@ -122,7 +122,7 @@ cp .env.example .env
 
 5. 启动后端服务
 ```bash
-uvicorn app.api.main:app --reload --host 0.0.0.0 --port 8000
+uvicorn app.api.main:app --reload --host 0.0.0.0 --port 8001
 ```
 
 ### 前端安装
@@ -214,7 +214,11 @@ Agent可以自动调用以下高德地图MCP工具:
 
 ## 📄 API文档
 
-启动后端服务后,访问 `http://localhost:8000/docs` 查看完整的API文档。
+启动后端服务后,访问 `http://127.0.0.1:8001/docs` 查看完整的API文档。
+
+> 端口用 8001 而不是默认的 8000:8000 上常有别的服务(Docker 容器会连 IPv6 的
+> `[::]:8000` 一起占用),那样浏览器访问 `localhost:8000` 会连到别人身上并返回空响应
+> (`ERR_EMPTY_RESPONSE`)。地址统一写 `127.0.0.1` 也省掉了 IPv6 解析这一层意外。
 
 主要端点:
 - `POST /api/trip/plan` - 生成旅行计划

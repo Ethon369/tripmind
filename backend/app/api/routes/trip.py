@@ -95,7 +95,8 @@ def plan_trip(request: TripRequest):
         return TripPlanResponse(
             success=True,
             message="旅行计划生成成功",
-            data=trip_plan
+            data=trip_plan,
+            plan_id=plan_id
         )
 
     except Exception as e:

@@ -52,8 +52,9 @@ async def startup_event():
         raise
     
     print("\n" + "="*60)
-    print("📚 API文档: http://localhost:8000/docs")
-    print("📖 ReDoc文档: http://localhost:8000/redoc")
+    # 用 settings.port 而不是写死端口 —— 否则改了 PORT 这里会继续打印旧地址
+    print(f"📚 API文档: http://127.0.0.1:{settings.port}/docs")
+    print(f"📖 ReDoc文档: http://127.0.0.1:{settings.port}/redoc")
     print("="*60 + "\n")
 
 

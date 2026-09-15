@@ -295,14 +295,16 @@ const handleSubmit = async () => {
     loadingStatus.value = '✅ 完成!'
 
     if (response.success && response.data) {
-      // 保存到sessionStorage
+      // 仍然写一份 sessionStorage:Result 页可以立刻渲染,不用等接口回包。
+      // 但它只是缓存 —— 带 plan_id 跳过去之后,刷新/换标签页都能从后端取回。
       sessionStorage.setItem('tripPlan', JSON.stringify(response.data))
 
       message.success('旅行计划生成成功!')
 
       // 短暂延迟后跳转
+      const planId = response.plan_id
       setTimeout(() => {
-        router.push('/result')
+        router.push(planId ? `/result/${planId}` : '/result')
       }, 500)
     } else {
       message.error(response.message || '生成失败')

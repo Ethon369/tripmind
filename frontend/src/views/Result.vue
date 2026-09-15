@@ -6,14 +6,26 @@
         ← 返回首页
       </a-button>
       <a-space size="middle">
-        <a-button v-if="!editMode" @click="toggleEditMode" type="default">
+        <!-- 分享模式下整组编辑按钮都不出现(不是禁用 —— 别人打开链接
+             看到的应该是一份干净的行程,而不是一排点不动的按钮) -->
+        <a-button v-if="!editMode && !isShareMode" @click="toggleEditMode" type="default">
           ✏️ 编辑行程
         </a-button>
-        <a-button v-else @click="saveChanges" type="primary">
+        <a-button
+          v-else-if="editMode"
+          @click="saveChanges"
+          type="primary"
+          :loading="saving"
+        >
           💾 保存修改
         </a-button>
         <a-button v-if="editMode" @click="cancelEdit" type="default">
           ❌ 取消编辑
+        </a-button>
+
+        <!-- 有 id 才谈得上分享 -->
+        <a-button v-if="planId && !editMode" type="default" @click="copyShareLink">
+          🔗 复制分享链接
         </a-button>
 
         <!-- 导出按钮 -->
@@ -308,15 +320,17 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, nextTick } from 'vue'
-import { useRouter } from 'vue-router'
+import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { message } from 'ant-design-vue'
 import { DownOutlined } from '@ant-design/icons-vue'
 import AMapLoader from '@amap/amap-jsapi-loader'
 import html2canvas from 'html2canvas'
 import jsPDF from 'jspdf'
+import { API_BASE_URL, getPlan, updatePlan } from '@/services/api'
 import type { TripPlan } from '@/types'
 
+const route = useRoute()
 const router = useRouter()
 const tripPlan = ref<TripPlan | null>(null)
 const editMode = ref(false)
@@ -324,18 +338,81 @@ const originalPlan = ref<TripPlan | null>(null)
 const attractionPhotos = ref<Record<string, string>>({})
 const activeSection = ref('overview')
 const activeDays = ref<number[]>([0]) // 默认展开第一天
+const saving = ref(false)
 let map: any = null
 
-onMounted(async () => {
-  const data = sessionStorage.getItem('tripPlan')
-  if (data) {
-    tripPlan.value = JSON.parse(data)
-    // 加载景点图片
-    await loadAttractionPhotos()
-    // 等待DOM渲染完成后初始化地图
-    await nextTick()
-    initMap()
+/** 当前行程的 id。来自路由 /result/:id 或 /share/:id,没有则是空串。 */
+const planId = computed(() => (route.params.id as string) || '')
+
+/** 分享模式:只读。隐藏编辑入口。 */
+const isShareMode = computed(() => route.path.startsWith('/share'))
+
+/**
+ * 把一份行程渲染出来:存好数据 → 拉景点图 → 等 DOM → 初始化地图。
+ *
+ * 抽成函数是因为现在有两个入口要渲染(接口取回 / sessionStorage 缓存),
+ * 之前这段逻辑内联在 onMounted 里,复制一份迟早会漂移。
+ */
+async function renderPlan(plan: TripPlan) {
+  tripPlan.value = plan
+  attractionPhotos.value = {}
+
+  await loadAttractionPhotos()
+
+  // 先拆掉旧地图再重建。重复 initMap 会在同一个容器上叠加实例,
+  // 表现为标记点重影、点击弹出的信息窗对应不上。
+  if (map) {
+    map.destroy()
+    map = null
   }
+
+  await nextTick()
+  initMap()
+}
+
+onMounted(async () => {
+  const id = route.params.id as string | undefined
+
+  // ---- 路径 1:带 id,从后端取(刷新、换标签页、分享链接都走这条) ----
+  if (id) {
+    try {
+      const res = await getPlan(id)
+      if (res.success && res.data) {
+        await renderPlan(res.data)
+        return
+      }
+      // 后端对 status='running' 的行程会返回 success=false 而不是报错
+      message.error(res.message || '该行程尚未生成完成')
+    } catch (e: any) {
+      message.error(e.message || '行程不存在或已被删除')
+    }
+    // 取不到就回首页,不要留一个白屏
+    router.replace('/')
+    return
+  }
+
+  // ---- 路径 2:没带 id,回落到 sessionStorage(兼容旧的 /result) ----
+  const raw = sessionStorage.getItem('tripPlan')
+  if (!raw) {
+    router.replace('/')
+    return
+  }
+
+  try {
+    await renderPlan(JSON.parse(raw))
+  } catch (e) {
+    // 坏数据必须清掉:否则每次进这个页面都在同一个地方崩,永远出不来
+    console.error('本地缓存的行程解析失败:', e)
+    sessionStorage.removeItem('tripPlan')
+    message.error('本地缓存的行程已损坏,请重新生成')
+    router.replace('/')
+  }
+})
+
+// 组件卸载时销毁地图,否则每次进出页面都泄漏一个高德地图实例
+onUnmounted(() => {
+  map?.destroy()
+  map = null
 })
 
 const goBack = () => {
@@ -360,21 +437,52 @@ const toggleEditMode = () => {
 }
 
 // 保存修改
-const saveChanges = () => {
+const saveChanges = async () => {
+  if (!tripPlan.value) return
+
   editMode.value = false
-  // 更新sessionStorage
-  if (tripPlan.value) {
-    sessionStorage.setItem('tripPlan', JSON.stringify(tripPlan.value))
+
+  // 有 id 就回写后端(刷新/换设备都在),没有则只能存本地缓存
+  if (planId.value) {
+    saving.value = true
+    try {
+      await updatePlan(planId.value, tripPlan.value)
+      message.success('修改已保存')
+    } catch (e: any) {
+      // 没存上就不能假装成功 —— 退回编辑态,让用户知道改动还在手上
+      message.error(e.message || '保存失败,请重试')
+      editMode.value = true
+      return
+    } finally {
+      saving.value = false
+    }
+  } else {
+    message.success('修改已保存(仅保存在本标签页)')
   }
-  message.success('修改已保存')
+
+  sessionStorage.setItem('tripPlan', JSON.stringify(tripPlan.value))
 
   // 重新初始化地图以反映更改
   if (map) {
     map.destroy()
+    map = null
   }
   nextTick(() => {
     initMap()
   })
+}
+
+// 复制分享链接
+const copyShareLink = async () => {
+  const url = `${window.location.origin}/share/${planId.value}`
+  try {
+    await navigator.clipboard.writeText(url)
+    message.success('分享链接已复制')
+  } catch {
+    // 非 HTTPS 或浏览器不给剪贴板权限时会走到这里。
+    // 与其静默失败,不如把链接显示出来让用户自己复制。
+    message.info(url, 8)
+  }
 }
 
 // 取消编辑
@@ -432,7 +540,7 @@ const loadAttractionPhotos = async () => {
 
   tripPlan.value.days.forEach(day => {
     day.attractions.forEach(attraction => {
-      const promise = fetch(`http://localhost:8000/api/poi/photo?name=${encodeURIComponent(attraction.name)}`)
+      const promise = fetch(`${API_BASE_URL}/api/poi/photo?name=${encodeURIComponent(attraction.name)}`)
         .then(res => res.json())
         .then(data => {
           if (data.success && data.data.photo_url) {

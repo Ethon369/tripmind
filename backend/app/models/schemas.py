@@ -155,6 +155,10 @@ class TripPlanResponse(BaseModel):
     success: bool = Field(..., description="是否成功")
     message: str = Field(default="", description="消息")
     data: Optional[TripPlan] = Field(default=None, description="旅行计划数据")
+    # 前端靠它跳 /result/{plan_id}、拼分享链接、以及之后回写编辑。
+    # 没有这个字段的话前端只能跳 /result 并靠 sessionStorage 传数据,
+    # 那样一刷新、一换标签页就丢,也做不出分享。
+    plan_id: Optional[str] = Field(default=None, description="行程 ID,也是分享链接里的 id")
 
 
 class POIInfo(BaseModel):

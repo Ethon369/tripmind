@@ -26,7 +26,10 @@ class Settings(BaseSettings):
 
     # 服务器配置
     host: str = "0.0.0.0"
-    port: int = 8000
+    # 8000 被本机 Docker 容器占了(它会连着 IPv6 的 [::]:8000 一起抢),
+    # 结果是浏览器访问 localhost:8000 连到 Docker 那边、返回空响应。
+    # 换 8001 避开。前端配套地址见 frontend/.env 与 vite.config.ts。
+    port: int = 8001
 
     # CORS配置 - 使用字符串,在代码中分割
     cors_origins: str = "http://localhost:5173,http://localhost:3000,http://127.0.0.1:5173,http://127.0.0.1:3000"
