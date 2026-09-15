@@ -27,3 +27,10 @@ uv>=0.8.0
 # 其他工具
 python-dateutil>=2.8.2
 huggingface_hub>=0.25.0
+
+# RAG:向量库与文档解析
+# 注意:不要加 torch / sentence-transformers —— Python 3.14 上
+# 没有预编译 wheel,Windows 下装必失败。本项目用硅基流动的
+# REST embedding 接口,只需要 requests(已随 hello-agents 装好)。
+qdrant-client>=1.9.0
+markitdown>=0.0.1

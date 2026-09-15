@@ -46,6 +46,28 @@ class Settings(BaseSettings):
     # 日志配置
     log_level: str = "INFO"
 
+    # ---------- RAG / 向量库 ----------
+    # collection 名字里带维度(1024),是为了防止"换了 embedding 模型但忘了重建库"
+    # 导致维度不匹配 —— 那种情况检索会静默返回空结果,不报任何错
+    qdrant_url: str = "http://localhost:6333"
+    qdrant_api_key: str = ""
+    qdrant_collection: str = "trip_kb_1024"
+
+    # ---------- Embedding(硅基流动,OpenAI 兼容) ----------
+    embed_model_type: str = "dashscope"
+    embed_model_name: str = "BAAI/bge-m3"
+    embed_api_key: str = ""
+    embed_base_url: str = "https://api.siliconflow.cn/v1"
+
+    # ---------- 本地存储 ----------
+    db_path: str = "./data/tripmind.db"
+    runs_dir: str = "./data/runs"
+    frozen_dir: str = "./data/frozen"
+
+    # ---------- 功能开关(供评测做 A/B 对比) ----------
+    enable_rag: bool = False
+    agent_mode: str = "pipeline"
+
     class Config:
         env_file = ".env"
         case_sensitive = False
