@@ -7,7 +7,7 @@ from ...models.schemas import (
     ErrorResponse
 )
 from ...agents.trip_planner_agent import get_trip_planner_agent
-from ...observability import make_observer
+from ...observability import collect_usage, make_observer
 
 router = APIRouter(prefix="/trip", tags=["旅行规划"])
 
@@ -48,9 +48,18 @@ def plan_trip(request: TripRequest):
         agent = get_trip_planner_agent()
 
         # 生成旅行计划(observer 负责记录各阶段耗时与是否降级)
+        # collect_usage() 把这次运行里所有 LLM 调用计入同一个 collector,
+        # run_end() 落盘时会把用量一并写进日志。
         print("🚀 开始生成旅行计划...")
         observer = make_observer(enabled=True)
-        trip_plan = agent.plan_trip(request, observer=observer)
+        with collect_usage() as usage:
+            trip_plan = agent.plan_trip(request, observer=observer)
+
+        print(
+            f"💰 本次用量: {usage.total_tokens} tokens "
+            f"(入 {usage.prompt_tokens} / 出 {usage.completion_tokens}), "
+            f"花费 {usage.cost_cny} 元, {usage.llm_calls} 次调用 [{usage.usage_source}]"
+        )
 
         print("✅ 旅行计划生成成功,准备返回响应\n")
 

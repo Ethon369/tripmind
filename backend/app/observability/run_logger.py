@@ -124,6 +124,30 @@ class JsonlObserver(NullObserver):
             }
         )
 
+        # 如果调用方用 collect_usage() 包住了本次运行,这里就能读到用量。
+        # 用 contextvar 而不是传参,是为了不改 plan_trip() 的签名。
+        try:
+            from .metering import get_collector
+
+            collector = get_collector()
+            if collector is not None and collector.calls:
+                self._record["usage"] = collector.summary()
+                self._record["llm_calls_detail"] = [
+                    {
+                        "seq": i,
+                        "model": c.model,
+                        "prompt_tokens": c.prompt_tokens,
+                        "completion_tokens": c.completion_tokens,
+                        "cache_hit_tokens": c.cache_hit_tokens,
+                        "cost_cny": c.cost_cny,
+                        "source": c.source,
+                        "ms": c.ms,
+                    }
+                    for i, c in enumerate(collector.calls, 1)
+                ]
+        except Exception as e:
+            self._record["usage_error"] = f"{type(e).__name__}: {e}"
+
         # 只记行程的摘要,不记整个对象 —— 日志文件会膨胀得太快
         if plan is not None:
             try:
