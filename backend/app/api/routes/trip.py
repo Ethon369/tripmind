@@ -7,6 +7,7 @@ from ...models.schemas import (
     ErrorResponse
 )
 from ...agents.trip_planner_agent import get_trip_planner_agent
+from ...observability import make_observer
 
 router = APIRouter(prefix="/trip", tags=["旅行规划"])
 
@@ -17,9 +18,16 @@ router = APIRouter(prefix="/trip", tags=["旅行规划"])
     summary="生成旅行计划",
     description="根据用户输入的旅行需求,生成详细的旅行计划"
 )
-async def plan_trip(request: TripRequest):
+def plan_trip(request: TripRequest):
     """
     生成旅行计划
+
+    注意:这里刻意用同步的 def 而不是 async def。
+
+    plan_trip() 内部是一次要跑几十秒的阻塞调用(4 次 LLM + MCP 工具)。
+    如果写成 async def,FastAPI 会在事件循环里直接执行它 —— 在这几十秒内
+    整个服务被卡死,/health、/api/poi/photo、历史列表全部无响应。
+    写成 def,FastAPI 会自动把它丢进线程池,不阻塞事件循环。
 
     Args:
         request: 旅行请求参数
@@ -39,9 +47,10 @@ async def plan_trip(request: TripRequest):
         print("🔄 获取多智能体系统实例...")
         agent = get_trip_planner_agent()
 
-        # 生成旅行计划
+        # 生成旅行计划(observer 负责记录各阶段耗时与是否降级)
         print("🚀 开始生成旅行计划...")
-        trip_plan = agent.plan_trip(request)
+        observer = make_observer(enabled=True)
+        trip_plan = agent.plan_trip(request, observer=observer)
 
         print("✅ 旅行计划生成成功,准备返回响应\n")
 
@@ -66,17 +75,36 @@ async def plan_trip(request: TripRequest):
     summary="健康检查",
     description="检查旅行规划服务是否正常"
 )
-async def health_check():
-    """健康检查"""
+def health_check():
+    """健康检查
+
+    同样使用同步 def —— get_trip_planner_agent() 首次调用会构建整个
+    多智能体系统(含 MCP 工具连接),是阻塞操作。
+    """
     try:
         # 检查Agent是否可用
         agent = get_trip_planner_agent()
-        
+
+        # 注意:MultiAgentTripPlanner 没有 .agent 属性。
+        # 之前写的 agent.agent.name 会抛 AttributeError,被 except 捕获后
+        # 恒返回 503 —— 这个端点其实一直是坏的。
+        agents = {
+            "attraction": agent.attraction_agent,
+            "weather": agent.weather_agent,
+            "hotel": agent.hotel_agent,
+            "planner": agent.planner_agent,
+        }
+
         return {
             "status": "healthy",
             "service": "trip-planner",
-            "agent_name": agent.agent.name,
-            "tools_count": len(agent.agent.list_tools())
+            "agents": {name: a.name for name, a in agents.items()},
+            # SimpleAgent.list_tools() 是公开 API,返回该 agent 注册的工具
+            "agent_tools": {name: len(a.list_tools()) for name, a in agents.items()},
+            # MCPTool 没有公开的 list_tools();_available_tools 是它在 __init__
+            # 里做完工具发现后填充的私有属性。用 getattr 兜底,免得将来框架
+            # 内部改名时连健康检查本身都挂掉。
+            "mcp_tools_count": len(getattr(agent.amap_tool, "_available_tools", None) or []),
         }
     except Exception as e:
         raise HTTPException(

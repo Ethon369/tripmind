@@ -1,0 +1,122 @@
+{
+  "version": "1.0",
+  "note": [
+    "评测 harness 的固定输入集。",
+    "这些请求会被反复跑,配合 data/frozen/ 里冻结的高德响应,",
+    "保证不同版本之间的指标差异只来自代码改动,不来自高德当天返回了什么。",
+    "覆盖 5 个城市 × 1/3/5 天 × 不同意向,共 10 条。",
+    "日期统一用 2026 年 10 月,避免落入过去日期。"
+  ],
+  "requests": [
+    {
+      "id": "bj-1d-history",
+      "city": "北京",
+      "start_date": "2026-10-01",
+      "end_date": "2026-10-01",
+      "travel_days": 1,
+      "transportation": "公共交通",
+      "accommodation": "经济型酒店",
+      "preferences": ["历史文化"],
+      "free_text_input": ""
+    },
+    {
+      "id": "bj-3d-history-food",
+      "city": "北京",
+      "start_date": "2026-10-01",
+      "end_date": "2026-10-03",
+      "travel_days": 3,
+      "transportation": "公共交通",
+      "accommodation": "经济型酒店",
+      "preferences": ["历史文化", "美食"],
+      "free_text_input": ""
+    },
+    {
+      "id": "bj-5d-family",
+      "city": "北京",
+      "start_date": "2026-10-01",
+      "end_date": "2026-10-05",
+      "travel_days": 5,
+      "transportation": "自驾",
+      "accommodation": "亲子酒店",
+      "preferences": ["亲子", "自然风光"],
+      "free_text_input": "行程尽量宽松,每天不要排太满"
+    },
+    {
+      "id": "sh-3d-modern",
+      "city": "上海",
+      "start_date": "2026-10-02",
+      "end_date": "2026-10-04",
+      "travel_days": 3,
+      "transportation": "公共交通",
+      "accommodation": "高档酒店",
+      "preferences": ["现代都市", "建筑"],
+      "free_text_input": ""
+    },
+    {
+      "id": "sh-5d-shopping-food",
+      "city": "上海",
+      "start_date": "2026-10-02",
+      "end_date": "2026-10-06",
+      "travel_days": 5,
+      "transportation": "公共交通",
+      "accommodation": "经济型酒店",
+      "preferences": ["购物", "美食"],
+      "free_text_input": "希望多安排一些本地小吃"
+    },
+    {
+      "id": "cd-1d-food",
+      "city": "成都",
+      "start_date": "2026-10-03",
+      "end_date": "2026-10-03",
+      "travel_days": 1,
+      "transportation": "公共交通",
+      "accommodation": "经济型酒店",
+      "preferences": ["美食"],
+      "free_text_input": ""
+    },
+    {
+      "id": "cd-3d-food-leisure",
+      "city": "成都",
+      "start_date": "2026-10-03",
+      "end_date": "2026-10-05",
+      "travel_days": 3,
+      "transportation": "公共交通",
+      "accommodation": "民宿",
+      "preferences": ["美食", "休闲"],
+      "free_text_input": ""
+    },
+    {
+      "id": "xa-3d-history",
+      "city": "西安",
+      "start_date": "2026-10-04",
+      "end_date": "2026-10-06",
+      "travel_days": 3,
+      "transportation": "公共交通",
+      "accommodation": "经济型酒店",
+      "preferences": ["历史文化"],
+      "free_text_input": ""
+    },
+    {
+      "id": "xa-5d-history-food",
+      "city": "西安",
+      "start_date": "2026-10-04",
+      "end_date": "2026-10-08",
+      "travel_days": 5,
+      "transportation": "公共交通",
+      "accommodation": "经济型酒店",
+      "preferences": ["历史文化", "美食"],
+      "free_text_input": ""
+    },
+    {
+      "id": "hz-3d-nature",
+      "city": "杭州",
+      "start_date": "2026-10-05",
+      "end_date": "2026-10-07",
+      "travel_days": 3,
+      "transportation": "公共交通",
+      "accommodation": "民宿",
+      "preferences": ["自然风光", "休闲"],
+      "free_text_input": "想住在西湖附近"
+    }
+  ]
+}

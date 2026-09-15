@@ -7,6 +7,7 @@ from hello_agents.tools import MCPTool
 from ..services.llm_service import get_llm
 from ..models.schemas import TripRequest, TripPlan, DayPlan, Attraction, Meal, WeatherInfo, Location, Hotel
 from ..config import get_settings
+from ..observability import NullObserver
 
 # ============ Agent提示词 ============
 
@@ -220,16 +221,30 @@ class MultiAgentTripPlanner:
             traceback.print_exc()
             raise
     
-    def plan_trip(self, request: TripRequest) -> TripPlan:
+    def plan_trip(self, request: TripRequest, observer: NullObserver | None = None) -> TripPlan:
         """
         使用多智能体协作生成旅行计划
 
         Args:
             request: 旅行请求
+            observer: 可选的运行观察者,用于记录各阶段耗时与 fallback 情况。
+                      不传时使用 NullObserver(所有钩子为空操作),行为与
+                      加埋点之前完全一致。
 
         Returns:
             旅行计划
         """
+        obs = observer or NullObserver()
+        obs.run_start(request)
+
+        # 清空 4 个 agent 的历史记录。
+        # 本类是模块级单例,而 SimpleAgent.run() 每次都会把输入输出追加进
+        # _history 且永不清理。不清的话,第 N 次请求的 prompt 里会塞进前
+        # N-1 次的内容 —— 结果随调用顺序漂移、不可复现,而且 token 成本虚高。
+        for _agent in (self.attraction_agent, self.weather_agent,
+                       self.hotel_agent, self.planner_agent):
+            _agent.clear_history()
+
         try:
             print(f"\n{'='*60}")
             print(f"🚀 开始多智能体协作规划旅行...")
@@ -241,42 +256,58 @@ class MultiAgentTripPlanner:
 
             # 步骤1: 景点搜索Agent搜索景点
             print("📍 步骤1: 搜索景点...")
+            obs.stage_start("attractions")
             attraction_query = self._build_attraction_query(request)
             attraction_response = self.attraction_agent.run(attraction_query)
+            obs.stage_end("attractions")
+            obs.stage_response("attractions", attraction_response)
             print(f"景点搜索结果: {attraction_response[:200]}...\n")
 
             # 步骤2: 天气查询Agent查询天气
             print("🌤️  步骤2: 查询天气...")
+            obs.stage_start("weather")
             weather_query = f"请查询{request.city}的天气信息"
             weather_response = self.weather_agent.run(weather_query)
+            obs.stage_end("weather")
+            obs.stage_response("weather", weather_response)
             print(f"天气查询结果: {weather_response[:200]}...\n")
 
             # 步骤3: 酒店推荐Agent搜索酒店
             print("🏨 步骤3: 搜索酒店...")
+            obs.stage_start("hotels")
             hotel_query = f"请搜索{request.city}的{request.accommodation}酒店"
             hotel_response = self.hotel_agent.run(hotel_query)
+            obs.stage_end("hotels")
+            obs.stage_response("hotels", hotel_response)
             print(f"酒店搜索结果: {hotel_response[:200]}...\n")
 
             # 步骤4: 行程规划Agent整合信息生成计划
             print("📋 步骤4: 生成行程计划...")
+            obs.stage_start("planning")
             planner_query = self._build_planner_query(request, attraction_response, weather_response, hotel_response)
             planner_response = self.planner_agent.run(planner_query)
+            obs.stage_end("planning")
+            obs.stage_response("planning", planner_response)
             print(f"行程规划结果: {planner_response[:300]}...\n")
 
             # 解析最终计划
-            trip_plan = self._parse_response(planner_response, request)
+            trip_plan = self._parse_response(planner_response, request, obs)
 
             print(f"{'='*60}")
             print(f"✅ 旅行计划生成完成!")
             print(f"{'='*60}\n")
 
+            obs.run_end(trip_plan, ok=True)
             return trip_plan
 
         except Exception as e:
             print(f"❌ 生成旅行计划失败: {str(e)}")
             import traceback
             traceback.print_exc()
-            return self._create_fallback_plan(request)
+            obs.mark_fallback(f"plan_trip 异常: {type(e).__name__}: {e}")
+            trip_plan = self._create_fallback_plan(request)
+            obs.run_end(trip_plan, ok=False, error=f"{type(e).__name__}: {e}")
+            return trip_plan
     
     def _build_attraction_query(self, request: TripRequest) -> str:
         """构建景点搜索查询 - 直接包含工具调用"""
@@ -325,17 +356,20 @@ class MultiAgentTripPlanner:
 
         return query
     
-    def _parse_response(self, response: str, request: TripRequest) -> TripPlan:
+    def _parse_response(self, response: str, request: TripRequest,
+                        observer: NullObserver | None = None) -> TripPlan:
         """
         解析Agent响应
-        
+
         Args:
             response: Agent响应文本
             request: 原始请求
-            
+            observer: 可选观察者,解析失败时会标记 fallback
+
         Returns:
             旅行计划
         """
+        obs = observer or NullObserver()
         try:
             # 尝试从响应中提取JSON
             # 查找JSON代码块
@@ -366,6 +400,7 @@ class MultiAgentTripPlanner:
         except Exception as e:
             print(f"⚠️  解析响应失败: {str(e)}")
             print(f"   将使用备用方案生成计划")
+            obs.mark_fallback(f"响应解析失败,已改用备用方案: {type(e).__name__}: {e}")
             return self._create_fallback_plan(request)
     
     def _create_fallback_plan(self, request: TripRequest) -> TripPlan:
