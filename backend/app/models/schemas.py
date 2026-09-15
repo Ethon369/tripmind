@@ -196,6 +196,69 @@ class WeatherResponse(BaseModel):
     data: List[WeatherInfo] = Field(default=[], description="天气信息")
 
 
+# ============ 持久化 / 历史行程 ============
+
+class PlanSummary(BaseModel):
+    """历史列表里的一条。
+
+    刻意【不含】完整行程(plan_json 可能几十 KB),只带列表要显示的信息
+    和两个从行程里算出来的数字。
+    """
+
+    id: str = Field(..., description="行程 ID,也是分享链接里的 id")
+    title: Optional[str] = Field(default=None, description="展示标题,如「北京 3日游」")
+    city: str = Field(..., description="目的地城市")
+    start_date: str = Field(..., description="开始日期")
+    end_date: str = Field(..., description="结束日期")
+    travel_days: int = Field(..., description="天数")
+    status: str = Field(..., description="running/ok/fallback/error")
+    created_at: str = Field(..., description="创建时间 ISO8601")
+    updated_at: str = Field(..., description="更新时间 ISO8601")
+
+    # 成本
+    total_tokens: int = Field(default=0, description="总 token 数")
+    cost_cny: float = Field(default=0.0, description="花费(元)")
+    latency_ms: int = Field(default=0, description="生成耗时(毫秒)")
+    llm_calls: int = Field(default=0, description="LLM 调用次数")
+    usage_source: Optional[str] = Field(default=None, description="api / estimated")
+
+    # 从行程里算出来的摘要
+    warnings: List[str] = Field(default_factory=list, description="降级原因")
+    attractions: int = Field(default=0, description="景点总数")
+    total_budget: int = Field(default=0, description="行程总预算(元)")
+
+
+class PlanStats(BaseModel):
+    """历史页顶部的聚合数字。"""
+
+    total: int = Field(default=0, description="行程总数")
+    cost_cny: float = Field(default=0.0, description="累计花费(元)")
+    total_tokens: int = Field(default=0, description="累计 token")
+    llm_calls: int = Field(default=0, description="累计 LLM 调用次数")
+
+
+class PlanListResponse(BaseModel):
+    """历史列表响应。"""
+
+    success: bool = Field(default=True)
+    message: str = Field(default="")
+    data: List[PlanSummary] = Field(default_factory=list)
+    stats: Optional[PlanStats] = Field(default=None, description="聚合统计")
+
+
+class PlanDetailResponse(BaseModel):
+    """单个行程的详情。
+
+    data 直接是 TripPlan —— 前端可以复用渲染逻辑,不必为历史详情另写一套。
+    meta 装 id / 时间 / 成本这些"行程本身之外"的信息。
+    """
+
+    success: bool = Field(default=True)
+    message: str = Field(default="")
+    data: Optional[TripPlan] = Field(default=None)
+    meta: Optional[PlanSummary] = Field(default=None)
+
+
 # ============ 错误响应 ============
 
 class ErrorResponse(BaseModel):
