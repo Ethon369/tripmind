@@ -22,9 +22,16 @@
     "noUncheckedSideEffectImports": true,
 
     /* Path mapping */
-    "baseUrl": ".",
+    // baseUrl 已删除。TypeScript 6.0 起它被废弃(诊断 TS5101),
+    // 7.0 将彻底移除;VS Code 自带的 TS 是 6.0.3,所以编辑器会画红线,
+    // 而项目构建用的 5.9.3 不报错 —— 表现为"IDE 报错但 npm run build 通过"。
+    //
+    // 它原来的唯一作用是给 paths 提供前缀。删掉之后,paths 里的路径
+    // 直接相对于本文件所在目录,所以要把 "./" 写全。
+    // 顺带:baseUrl 还兼作模块解析的查找根,会导致 "someModule.js" 这种
+    // 导入被意外解析到 src/ 下 —— 删掉它也去掉了这个坑。
     "paths": {
-      "@/*": ["src/*"]
+      "@/*": ["./src/*"]
     }
   },
   "include": ["src/**/*.ts", "src/**/*.tsx", "src/**/*.vue", "src/**/*.d.ts"]
