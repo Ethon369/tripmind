@@ -10,11 +10,13 @@
 模块
 ----
 - `geo.py`                地理计算(城市范围判定、球面距离)
-- `config.py`             阈值与版本号。**改阈值必须改 METRICS_VERSION**
-- `metrics.py`            每个指标一个纯函数,全部客观可复算
-- `metrics_grounding.py`  (待建)需要冻结真实 POI 的接地性指标
+- `config.py`             阈值与版本号
+- `metrics.py`            A 类(自洽性)+ C 类(成本)指标,每个都是纯函数
+- `metrics_grounding.py`  B 类:需要冻结的真实 POI 做 ground truth
 - `run_eval.py`           (待建)CLI:跑固定输入集、出报告
 - `report.py`             (待建)把指标渲染成 markdown
+
+ground truth 由 `scripts/recorder.py` 录进 `data/frozen/amap/`,详见那个脚本。
 
 两条设计原则
 ------------
@@ -23,12 +25,13 @@
 要么和外部真实数据比对(坐标、POI 名)。
 
 **可复现靠冻结,不靠运气。** 固定输入集在 `data/frozen/requests.json`,
-高德响应将来也冻结进 `data/frozen/`。这样两次跑出来的差异只可能来自
+高德响应冻结在 `data/frozen/amap/`。这样两次跑出来的差异只可能来自
 代码改动,不会来自"今天高德返回了别的"。
 """
 
 from .config import METRICS_VERSION
 from .metrics import EvalContext, Metric, evaluate, summarize
+from .metrics_grounding import ground_truth_for, load_inventory
 
 __all__ = [
     "METRICS_VERSION",
@@ -36,4 +39,6 @@ __all__ = [
     "Metric",
     "evaluate",
     "summarize",
+    "ground_truth_for",
+    "load_inventory",
 ]

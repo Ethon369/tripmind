@@ -543,6 +543,19 @@ ALL_METRICS: list[Callable[[EvalContext], Metric]] = [
 ]
 
 
+def _all_metrics() -> list[Callable[[EvalContext], Metric]]:
+    """本模块的指标 + 接地性指标(metrics_grounding)。
+
+    为什么要写成函数、在里面 import:
+    `metrics_grounding` 需要 `EvalContext` / `Metric`,所以它 import 本模块;
+    本模块若在顶层 import 它,就成环了。放到函数里延迟导入是最省事的解法 ——
+    调用 `evaluate()` 时两个模块都已经加载完,不成环。
+    """
+    from .metrics_grounding import GROUNDING_METRICS
+
+    return ALL_METRICS + GROUNDING_METRICS
+
+
 def evaluate(ctx: EvalContext) -> list[Metric]:
     """跑全部指标,按 config.METRIC_ORDER 排序返回。
 
@@ -550,7 +563,7 @@ def evaluate(ctx: EvalContext) -> list[Metric]:
     评测跑到一半因为一个指标崩溃而丢掉全部结果,代价太大。
     """
     results: list[Metric] = []
-    for fn in ALL_METRICS:
+    for fn in _all_metrics():
         name = fn.__name__.removeprefix("m_")
         try:
             results.append(fn(ctx))

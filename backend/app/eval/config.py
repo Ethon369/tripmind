@@ -53,13 +53,35 @@ BUDGET_DETAIL_TOLERANCE_PCT = 5.0
 # 套了北京的坐标),抓不到"编了一个本城市的假坐标"。详见 geo.py 的说明。
 COORD_COVERAGE_MIN = 0.95
 
-# 景点名与真实 POI 名的相似度阈值(difflib.SequenceMatcher ratio)。
-# 0.75 是经验值:够容"故宫"vs"故宫博物院"这类别名,又能排除完全不同的景点。
+# 景点名与真实 POI 名的相似度阈值(见 metrics_grounding.name_similarity)。
+# 0.75 是经验值:能排除完全不同的景点名。
+#
+# ⚠️ 注意:光靠 difflib 的 ratio 抓不住"故宫" vs "故宫博物院" ——
+# ratio 是 2*匹配字数/总字数 = 2*2/7 ≈ 0.57,低于阈值会被判成不匹配。
+# 所以 name_similarity 在 ratio 之前先做一次**包含关系**判定:
+# 短的名字完全出现在长的里面(如"故宫"⊂"故宫博物院")直接算命中。
+# 但"公园""广场"这类纯类别词不算 —— 它们是类别不是地点名,
+# 详见 metrics_grounding._GENERIC_WORDS。
 POI_NAME_MATCH_RATIO = 0.75
+
+# 景点名能在冻结的真实 POI 库存里找到支撑的比例下限。
+#
+# ⚠️ 这是一个**下限**:库存只可能不完整,不可能错。所以真实值 ≥ 这个数。
+# 反过来说,没匹配上**不一定是编的** —— 也可能是真实景点但没被库存收录。
+# 报告里必须带上这句,否则会把"库存不全"读成"模型在编"。
+POI_SUPPORT_RATE_MIN = 0.8
 
 # 坐标与真实 POI 坐标的平均偏差上限(公里)。
 # 超过这个数说明"名字对了但位置是编的"。
 COORD_MAE_KM_MAX = 2.0
+
+# coord_mae_km 至少要有几个景点匹配上才作判定。
+#
+# 为什么需要这个下限:如果 20 个景点里只有 1 个匹配上,那个 MAE 是
+# 在 1 个样本上算出来的,拿它判"通过/不通过"没有意义。
+# 样本不足时返回 ok=None(不作判定),而不是硬判 —— 这正是三态设计
+# 存在的理由:把"不知道"和"不合格"分开。
+MIN_MATCHES_FOR_MAE = 3
 
 # ===========================================================================
 # 报告用
@@ -86,12 +108,15 @@ METRIC_ORDER = [
 
 # 只在报告里展示数值、不判定通过与否的指标(成本类、分布类)。
 # 理由:它们没有"及格线",只有"高不高"。
+#
+# 注意 `coord_mae_km` **不在**这里 —— 它确实有及格线(COORD_MAE_KM_MAX),
+# 而且它正是用来判"坐标是不是编的"的,不判定就失去了意义。
+# 它原先被列在这里,是 5a 阶段的临时状态(当时还没有 ground truth 可算)。
 INFORMATIONAL_METRICS = {
     "intraday_travel_km_p95",
     "latency_s",
     "llm_calls",
     "cost_cny",
-    "coord_mae_km",
 }
 
 
@@ -109,5 +134,7 @@ def thresholds_snapshot() -> dict[str, Any]:
         "budget_detail_tolerance_pct": BUDGET_DETAIL_TOLERANCE_PCT,
         "coord_coverage_min": COORD_COVERAGE_MIN,
         "poi_name_match_ratio": POI_NAME_MATCH_RATIO,
+        "poi_support_rate_min": POI_SUPPORT_RATE_MIN,
         "coord_mae_km_max": COORD_MAE_KM_MAX,
+        "min_matches_for_mae": MIN_MATCHES_FOR_MAE,
     }

@@ -13,9 +13,15 @@
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import pytest
 
 from app.eval.geo import CITY_BBOX, bbox_of, haversine_km, in_city, path_length_km
+
+# 录制的真实 POI 库存(由 scripts/recorder.py 产出,已提交进仓库)
+_INVENTORY = Path(__file__).resolve().parents[1] / "data" / "frozen" / "amap" / "poi_inventory.json"
 
 # 1 度纬度对应的公里数(地球平均半径决定,是个常数)
 KM_PER_DEGREE = 111.19
@@ -121,3 +127,57 @@ class TestPathLength:
         straight = path_length_km([(116.4, 39.9), (116.5, 39.9), (116.6, 39.9)])
         backtrack = path_length_km([(116.4, 39.9), (116.6, 39.9), (116.5, 39.9)])
         assert backtrack > straight
+
+
+class TestBboxAgainstRealData:
+    """用**录制的真实库存**反过来校验城市范围框。
+
+    为什么这条测试最有价值:上面那些用例的期望值是我手写的,
+    写错了测试也跟着错。而这里的期望来自**高德的实际返回** ——
+    搜索时传的是 `citylimit=true`,高德只会返回该城市的 POI,
+    所以任何一个落在框外的坐标,都说明**我的框画小了**,不是数据错。
+
+    这个 bug 真的发生过:西安的范围官方用**度分**表示(`34°45′`),
+    我按小数读成了 `34.45`(正确是 `34.75`),框小了 0.3 度 ——
+    于是阎良区、高陵区、蓝田县的 7 个合法 POI 全被判成"坐标越界"。
+    **假警报比指标偏低更糟**,它会让人以为模型在编造。
+    """
+
+    @staticmethod
+    def _inventory() -> dict:
+        if not _INVENTORY.exists():
+            pytest.skip("库存文件不存在(先跑 scripts/recorder.py)")
+        with open(_INVENTORY, encoding="utf-8") as f:
+            return json.load(f)
+
+    def test_录到的POI必须全部落在框内(self):
+        inv = self._inventory()
+        cities = inv.get("cities") or {}
+        assert cities, "库存里一个城市都没有"
+
+        outside: list[str] = []
+        checked = 0
+        for city, entry in cities.items():
+            if city not in CITY_BBOX:
+                continue
+            for poi in entry.get("pois") or []:
+                loc = poi.get("location")
+                if not (isinstance(loc, list) and len(loc) == 2):
+                    continue
+                checked += 1
+                if in_city(loc[0], loc[1], city) is False:
+                    outside.append(f"{city} {poi.get('name')} ({loc[0]:.3f},{loc[1]:.3f})")
+
+        assert checked > 0, "没检查到任何带坐标的 POI"
+        assert not outside, (
+            f"{len(outside)}/{checked} 个真实 POI 落在城市范围框外 —— "
+            f"说明 CITY_BBOX 画小了(度分换算错了?):\n  " + "\n  ".join(outside[:10])
+        )
+
+    def test_每个城市都录到了POI(self):
+        """某个城市录成空的话,那两条接地性指标会全部返回"无法计算" ——
+        报告上看起来像"没数据",实际是录制出了问题。"""
+        inv = self._inventory()
+        cities = inv.get("cities") or {}
+        for city, entry in cities.items():
+            assert len(entry.get("pois") or []) > 0, f"{city} 的库存是空的"

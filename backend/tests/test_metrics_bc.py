@@ -305,7 +305,12 @@ class TestEvaluate:
         assert positions == sorted(positions), f"顺序不对: {names}"
 
     def test_单个指标抛异常不影响其余(self, monkeypatch):
-        """跑到一半因为一个指标崩溃就丢掉全部结果,代价太大。"""
+        """跑到一半因为一个指标崩溃就丢掉全部结果,代价太大。
+
+        注意这里断言的是**行为**(炸掉的那个被记下来、没炸的照常出结果),
+        而不是"共几条" —— 后者会因为新指标接进来而莫名其妙地失败,
+        那种失败不含任何信息。
+        """
 
         def m_boom(ctx):
             raise RuntimeError("故意炸的")
@@ -314,12 +319,18 @@ class TestEvaluate:
         results = evaluate(EvalContext(request=make_request(), plan=make_plan(), run={}))
 
         by_name = {m.name: m for m in results}
-        assert len(results) == 2
         assert by_name["boom"].value is None
         assert "指标计算异常" in by_name["boom"].detail
         assert "RuntimeError" in by_name["boom"].detail
         # 另一个指标照常算出结果
         assert by_name["day_count_ok"].ok is True
+
+    def test_接地性指标也被纳入(self):
+        """evaluate() 要把 metrics_grounding 的两条也带上 ——
+        它们是延迟导入的,接线断了不会报错,只会静默少两条。"""
+        names = [m.name for m in evaluate(EvalContext(request=make_request(), plan=make_plan(), run={}))]
+        assert "poi_support_rate" in names
+        assert "coord_mae_km" in names
 
     def test_指标名去掉m_前缀(self):
         ctx = EvalContext(request=make_request(), plan=make_plan(), run={})
