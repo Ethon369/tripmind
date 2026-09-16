@@ -4,6 +4,7 @@ from typing import List, Dict, Any, Optional
 from hello_agents.tools import MCPTool
 from ..config import get_settings
 from ..models.schemas import Location, POIInfo, WeatherInfo
+from .mcp_launcher import resolve_uvx_command
 
 # 全局MCP工具实例
 _amap_mcp_tool = None
@@ -28,7 +29,9 @@ def get_amap_mcp_tool() -> MCPTool:
         _amap_mcp_tool = MCPTool(
             name="amap",
             description="高德地图服务,支持POI搜索、路线规划、天气查询等功能",
-            server_command=["uvx", "amap-mcp-server"],
+            # 绝对路径找 uvx —— 不靠 PATH,所以没激活 venv 也能起来。
+            # 详见 mcp_launcher.py 的说明。
+            server_command=resolve_uvx_command(),
             env={"AMAP_MAPS_API_KEY": settings.amap_api_key},
             auto_expand=True  # 自动展开为独立工具
         )

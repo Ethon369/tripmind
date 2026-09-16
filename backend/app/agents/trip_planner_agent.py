@@ -5,6 +5,7 @@ from typing import Dict, Any, List
 from hello_agents import SimpleAgent
 from hello_agents.tools import MCPTool
 from ..services.llm_service import get_llm
+from ..services.mcp_launcher import resolve_uvx_command
 from ..models.schemas import TripRequest, TripPlan, DayPlan, Attraction, Meal, WeatherInfo, Location, Hotel
 from ..config import get_settings
 from ..observability import NullObserver
@@ -169,7 +170,9 @@ class MultiAgentTripPlanner:
             self.amap_tool = MCPTool(
                 name="amap",
                 description="高德地图服务",
-                server_command=["uvx", "amap-mcp-server"],
+                # 绝对路径找 uvx —— 不靠 PATH,所以没激活 venv 也能起来。
+                # 详见 mcp_launcher.py 的说明。
+                server_command=resolve_uvx_command(),
                 env={"AMAP_MAPS_API_KEY": settings.amap_api_key},
                 auto_expand=True
             )
