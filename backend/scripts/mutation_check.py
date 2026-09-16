@@ -58,6 +58,7 @@ GEO = BACKEND / "app" / "eval" / "geo.py"
 METRICS = BACKEND / "app" / "eval" / "metrics.py"
 GROUNDING = BACKEND / "app" / "eval" / "metrics_grounding.py"
 PARSING = BACKEND / "app" / "services" / "amap_parsing.py"
+FALLBACK = BACKEND / "app" / "agents" / "fallback.py"
 LAUNCHER = BACKEND / "app" / "services" / "mcp_launcher.py"
 EVAL_REPORT = BACKEND / "app" / "eval" / "report.py"
 RUN_EVAL = BACKEND / "app" / "eval" / "run_eval.py"
@@ -307,6 +308,61 @@ MUTATIONS: list[tuple[Path, str, str, str]] = [
         "        sliced = dict(name_check)",
         "核对缓存不按城市切 —— 北京行程会拿上海的同名记录去判",
     ),
+    # ---- app/agents/fallback.py ----
+    #
+    # 这几条是在把**真实的旧实现**改回去。原来的 _create_fallback_plan 就是这个
+    # 样子:假景点名 + 写死的北京坐标 + "这是为您规划的…"。谁要是哪天把它改回来,
+    # 这几条测试必须全红。
+    (
+        FALLBACK,
+        "                    attractions=[],  # ← 不编造。前端对空列表显示「暂无数据」",
+        "                    attractions=[__import__('app.models.schemas', fromlist=['S'])"
+        ".Attraction(name=f'{request.city}景点{i + 1}', address='x', location="
+        "__import__('app.models.schemas', fromlist=['S']).Location(longitude=116.4, "
+        "latitude=39.9), visit_duration=120, description='d')],",
+        "退回原来的编造景点 —— 生成上海的计划会得到北京的坐标(真实踩过的 bug)",
+    ),
+    (
+        FALLBACK,
+        "                    meals=[],",
+        "                    meals=[__import__('app.models.schemas', fromlist=['S'])"
+        ".Meal(type='breakfast', name=f'第{i + 1}天早餐')],",
+        "退回原来的编造餐饮 —— 「第1天早餐」看起来像推荐,其实是空的",
+    ),
+    (
+        FALLBACK,
+        "                    hotel=None,",
+        "                    hotel=__import__('app.models.schemas', fromlist=['S'])"
+        ".Hotel(name='某酒店'),",
+        "退回编造酒店 —— 一份没内容的行程却推荐了具体酒店",
+    ),
+    (
+        FALLBACK,
+        "    if reason:\n        parts.append(f\"失败原因:{reason}。\")",
+        "    if False:\n        parts.append(f\"失败原因:{reason}。\")",
+        "失败原因不写进说明 —— 用户只看到「没生成」,不知道为什么",
+    ),
+    (
+        FALLBACK,
+        '        f"本次未能生成{request.city}的行程内容,下面是空的框架。",',
+        '        f"这是为您规划的{request.city}行程,请尽情享受。",',
+        "降级时谎称规划好了 —— 用户会以为那份空框架就是他的行程",
+    ),
+    (
+        FALLBACK,
+        "    try:\n"
+        "        return date.fromisoformat(str(value)[:10])\n"
+        "    except (TypeError, ValueError):\n"
+        "        return None",
+        "    return date.fromisoformat(str(value)[:10])",
+        "起始日期解析不加保护 —— 空串会让降级路径自己抛异常(兜底反而崩了)",
+    ),
+    (
+        FALLBACK,
+        "                    date=(start + timedelta(days=i)).isoformat(),",
+        "                    date=(start + timedelta(days=i * 2)).isoformat(),",
+        "日期不再是逐日连续 —— 前端排出来的行程会隔天跳",
+    ),
     # ---- services/mcp_launcher.py ----
     (
         LAUNCHER,
@@ -479,7 +535,8 @@ def main() -> int:
     originals = {
         path: _read(path)
         for path in {
-            GEO, METRICS, GROUNDING, PARSING, LAUNCHER, EVAL_REPORT, RUN_EVAL, RECORDER
+            GEO, METRICS, GROUNDING, PARSING, FALLBACK,
+            LAUNCHER, EVAL_REPORT, RUN_EVAL, RECORDER,
         }
     }
     lines: list[str] = []

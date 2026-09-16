@@ -90,8 +90,30 @@ def plan_trip(request: TripRequest):
             latency_ms=latency_ms,
         )
         print(f"💾 已保存: {plan_id} (status={status})")
-        print("✅ 旅行计划生成成功,准备返回响应\n")
 
+        # 降级时 success=False。
+        #
+        # `success` 的含义是「data 是一份**能用的**行程」——`Result.vue` 的注释
+        # 就是这么写的(用它区分 status='running')。降级拿到的是一份**空框架**
+        # (见 agents/fallback.py:景点和餐饮都是空的),不是能用的行程,
+        # 所以这里必须是 False。
+        #
+        # 为什么敢直接改:Home.vue 和 Result.vue **两边都已经处理** success=False
+        # 的分支(else 里 message.error),所以不需要动前端。用户会看到
+        # 「生成失败」而不是「生成成功」+ 一个空页面 —— 后者自相矛盾。
+        #
+        # ⚠️ 降级**不等于失败**:记录照样落库(status='fallback'),历史页看得到,
+        # 只是它明确标着自己没内容。
+        if observer.fallback_used:
+            print("⚠️  本次降级,返回 success=False(空框架,未编造内容)\n")
+            return TripPlanResponse(
+                success=False,
+                message="本次未能生成行程内容,已保存为空白记录 —— 请稍后重试",
+                data=trip_plan,
+                plan_id=plan_id,
+            )
+
+        print("✅ 旅行计划生成成功,准备返回响应\n")
         return TripPlanResponse(
             success=True,
             message="旅行计划生成成功",

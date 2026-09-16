@@ -6,9 +6,10 @@ from hello_agents import SimpleAgent
 from hello_agents.tools import MCPTool
 from ..services.llm_service import get_llm
 from ..services.mcp_launcher import resolve_uvx_command
-from ..models.schemas import TripRequest, TripPlan, DayPlan, Attraction, Meal, WeatherInfo, Location, Hotel
+from ..models.schemas import TripRequest, TripPlan
 from ..config import get_settings
 from ..observability import NullObserver
+from .fallback import build_empty_plan
 
 # ============ Agent提示词 ============
 
@@ -308,7 +309,11 @@ class MultiAgentTripPlanner:
             import traceback
             traceback.print_exc()
             obs.mark_fallback(f"plan_trip 异常: {type(e).__name__}: {e}")
-            trip_plan = self._create_fallback_plan(request)
+            # reason 会写进 overall_suggestions 给用户看 —— 所以要写成人话,
+            # 不能只给个异常类名
+            trip_plan = self._create_fallback_plan(
+                request, reason=f"生成过程中出错({type(e).__name__}: {e})"
+            )
             obs.run_end(trip_plan, ok=False, error=f"{type(e).__name__}: {e}")
             return trip_plan
     
@@ -404,53 +409,23 @@ class MultiAgentTripPlanner:
             print(f"⚠️  解析响应失败: {str(e)}")
             print(f"   将使用备用方案生成计划")
             obs.mark_fallback(f"响应解析失败,已改用备用方案: {type(e).__name__}: {e}")
-            return self._create_fallback_plan(request)
-    
-    def _create_fallback_plan(self, request: TripRequest) -> TripPlan:
-        """创建备用计划(当Agent失败时)"""
-        from datetime import datetime, timedelta
-        
-        # 解析日期
-        start_date = datetime.strptime(request.start_date, "%Y-%m-%d")
-        
-        # 创建每日行程
-        days = []
-        for i in range(request.travel_days):
-            current_date = start_date + timedelta(days=i)
-            
-            day_plan = DayPlan(
-                date=current_date.strftime("%Y-%m-%d"),
-                day_index=i,
-                description=f"第{i+1}天行程",
-                transportation=request.transportation,
-                accommodation=request.accommodation,
-                attractions=[
-                    Attraction(
-                        name=f"{request.city}景点{j+1}",
-                        address=f"{request.city}市",
-                        location=Location(longitude=116.4 + i*0.01 + j*0.005, latitude=39.9 + i*0.01 + j*0.005),
-                        visit_duration=120,
-                        description=f"这是{request.city}的著名景点",
-                        category="景点"
-                    )
-                    for j in range(2)
-                ],
-                meals=[
-                    Meal(type="breakfast", name=f"第{i+1}天早餐", description="当地特色早餐"),
-                    Meal(type="lunch", name=f"第{i+1}天午餐", description="午餐推荐"),
-                    Meal(type="dinner", name=f"第{i+1}天晚餐", description="晚餐推荐")
-                ]
+            return self._create_fallback_plan(
+                request, reason=f"模型返回的内容不是合法行程({type(e).__name__}: {e})"
             )
-            days.append(day_plan)
-        
-        return TripPlan(
-            city=request.city,
-            start_date=request.start_date,
-            end_date=request.end_date,
-            days=days,
-            weather_info=[],
-            overall_suggestions=f"这是为您规划的{request.city}{request.travel_days}日游行程,建议提前查看各景点的开放时间。"
-        )
+    
+    def _create_fallback_plan(self, request: TripRequest, reason: str = "") -> TripPlan:
+        """创建备用计划(当Agent失败时)。
+
+        **这里只是转发** —— 真正的实现在 `app/agents/fallback.py`。
+
+        为什么抽出去:这段逻辑原来是本方法里的 40 行,要构造整个 agent
+        (hello_agents + MCPTool + LLM)才能调,所以**没法单测**。
+        而 baseline 实测降级路径从没被触发过(`fallback_used` 10 条全是 0),
+        改完不能靠重跑 baseline 证明它对了 —— **只能靠单测**。
+
+        原来的实现在这里现造"北京景点1"和写死的北京坐标,详见 fallback.py 的说明。
+        """
+        return build_empty_plan(request, reason=reason)
 
 
 # 全局多智能体系统实例

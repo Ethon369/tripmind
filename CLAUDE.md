@@ -126,6 +126,7 @@ POST /api/trip/plan
 | `app/observability/` | `run_logger.py` 记 JSONL 事件流;`metering.py` 计量 token;`pricing.py` 峰谷定价 |
 | `app/store/` | stdlib `sqlite3` 手写 SQL,3 张表(plans / runs / llm_calls) |
 | `app/eval/` | 评测 harness:`geo`/`config`/`metrics`(自洽性+成本)/`metrics_grounding`(接地性)/`run_eval`(录制回放 CLI)/`report`(出 markdown) |
+| `app/agents/fallback.py` | 降级行程:保留请求的结构,**一个内容都不编**。纯函数,单测覆盖(降级路径 baseline 触发不到,只能靠单测) |
 | `app/services/amap_parsing.py` | 高德返回值解析(剥 MCP 外壳、拆 `"经度,纬度"`)。纯函数,`recorder.py` 与 P6 共用 |
 | `app/services/mcp_launcher.py` | 拼启动高德 MCP 的命令,用绝对路径找 `uvx`。纯函数,两个 `MCPTool` 创建点共用 |
 
@@ -215,27 +216,40 @@ baseline 里同一批名字:前者 **0.57**、后者 **0.98**。差值全部是�
 
 已在 `app/__init__.py` 里把 stdio 强制成 UTF-8(放在这里是为了让所有入口都生效)。
 
-### 4. 编造问题**没有在 baseline 里复现**(P6 的前提要重新看)
+### 4. 降级路径不再编造(P6 已修)
 
-`agents/trip_planner_agent.py` 的 `_create_fallback_plan()` **确实会**生成
-"北京景点1"这种假数据、坐标用 `116.4 + i*0.01` 现算,而且 `success=True` ——
-**这段代码还在**。但 P5 的 baseline 实测显示它**没被触发过**:
+**背景(baseline 实测)**:原来 `_create_fallback_plan()` 会现造一份"看起来正常"
+的行程 —— 假景点名 `上海景点1`、写死的北京坐标 `116.4 + i*0.01`、
+"这是为您规划的…",而且 `success=True`。但 P5 的 baseline 显示它**从没被触发过**:
 
-| 指标 | baseline 实测 | 说明 |
-|---|---|---|
-| `fallback_used` | **0 / 10** | 10 条请求一次都没走降级路径 |
-| `poi_exists_rate` | **0.9789** | 74 个景点名拿去高德搜,74 个都搜得到自己 |
-| `coord_mae_km` | **1.25 km**(8/9 通过) | 坐标是真的 |
+| 指标 | baseline 实测 |
+|---|---|
+| `fallback_used` | **0 / 10** |
+| `poi_exists_rate` | **0.9789**(74 个景点名 74 个真实) |
+| `coord_mae_km` | **1.25 km**(8/9 通过) |
 
-所以"生成上海的计划会得到北京坐标"在这 10 条里一次都没出现。
+所以"编造率"这个数字没问题 —— 但那颗雷一直在,只等 LLM 哪天输出解析不出来。
 
-**⚠️ 别把"没复现"读成"没问题"**:`_create_fallback_plan()` 仍然是颗雷 ——
-它只在 LLM 输出解析失败时才触发,而 baseline 那 10 条恰好都解析成功了。
-真正该修的是**那条路径本身**(宁可留空也不要编),不是"编造率"这个数字。
+**现在改成**(`app/agents/fallback.py`):**宁可空,也不要假**。
+
+| 元素 | 怎么办 |
+|---|---|
+| 天数、日期、交通、住宿 | **保留** —— 它们来自用户的请求,是事实 |
+| 景点 / 餐饮 / 酒店 / 预算 | **清空** —— 编不出真的就不放假的 |
+| `overall_suggestions` | **写清失败原因**,并明确"请勿据此出行" |
+| `TripPlanResponse.success` | **降级时 `False`**(前端两边都已处理该分支) |
+
+**⚠️ 为什么单独一个模块**:原来它是 `MultiAgentTripPlanner` 的方法,要构造整个
+agent 才能调 → **没法单测**。而降级路径在 baseline 里从没被触发过,改完
+**不能靠重跑 baseline 证明它对了**(重跑只会得到一模一样的数字)。只能靠单测。
+
+**⚠️ 顺手删了一段不可达的代码**:一开始给 `travel_days` 加了个 `min(…, 30)` 防线,
+写测试时才发现 `TripRequest.travel_days` 上有 `ge=1, le=30`,越界请求在构造
+pydantic 模型那步就被拒了,根本传不到这里。留一段永远不执行、也测不到的代码,
+只会让人以为有保护。
 
 `maps_text_search` 只返回 id/name/address/typecode 没有坐标,要 `maps_search_detail(id)`
 才有 `location` —— 这个事实仍然成立,`app/services/amap_service.py` 里 4 个 `TODO` 也还在。
-
 解析要用 `app/services/amap_parsing.py` 里那两个**被测过**的函数,不要重写:
 `unwrap_mcp_result()` 剥 MCP 文本外壳(用贪婪正则会在嵌套 JSON 上取过头)、
 `parse_location()` 拆 `"经度,纬度"` 字符串(顺序和常见的 "lat,lng" 相反)。
@@ -323,7 +337,7 @@ baseline 里同一批名字:前者 **0.57**、后者 **0.98**。差值全部是�
 | P3 | token / 成本计量 | ✅ |
 | P4 | SQLite 持久化 + 三页面 + 分享链接 | ✅ |
 | **P5** | **评测 harness + baseline 报告** | ✅ **完成**:`data/eval/baseline.md`,10 条行程,共花 ¥0.465 |
-| P6 | 数据接地:让降级路径**不再编造** + 给 LLM 真实坐标(`enrich_pois`) | ⬜ |
+| P6 | 数据接地:让降级路径**不再编造** | ✅ 降级路径已修(`app/agents/fallback.py`);`enrich_pois` 未做(见坑 #4,收益有限) |
 | P7 | RAG 双层知识库(poi_facts + city_guides) | ⬜ |
 | P8 | 并发 + supervisor-worker 编排对比 | ⬜ |
 | P9 | 前端去杂乱 + 修 4 个 bug | ⬜ |
