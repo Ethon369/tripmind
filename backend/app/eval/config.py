@@ -66,10 +66,19 @@ POI_NAME_MATCH_RATIO = 0.75
 
 # 景点名能在冻结的真实 POI 库存里找到支撑的比例下限。
 #
-# ⚠️ 这是一个**下限**:库存只可能不完整,不可能错。所以真实值 ≥ 这个数。
-# 反过来说,没匹配上**不一定是编的** —— 也可能是真实景点但没被库存收录。
-# 报告里必须带上这句,否则会把"库存不全"读成"模型在编"。
+# ⚠️ 它测的是**库存覆盖率**,不是编造率 —— 库存是 20 个关键词搜出来的**样本**
+# (每城 340~360 个),不是普查。baseline 实测:41 个"未命中"里逐个查过高德后
+# 绝大多数都真实存在。所以这条偏低时**先去看 poi_exists_rate 再下结论**。
 POI_SUPPORT_RATE_MIN = 0.8
+
+# 景点名能被**高德自己的地名库**精确解析出来的比例下限(见 m_poi_exists_rate)。
+#
+# 这条才是判断「编造」的。定得比 support_rate 高,因为高德的地名库远比
+# "20 个关键词"全 —— 一个真实存在的景点,高德基本都认得。
+#
+# 但**不能定到 1.0**:模型会把限定语拼进名字(如"人民公园·鹤鸣茶社"
+# "太古里·春熙路商圈"),这类复合名高德解析不到精确级,不是编造。
+POI_EXISTS_RATE_MIN = 0.85
 
 # 坐标与真实 POI 坐标的平均偏差上限(公里)。
 # 超过这个数说明"名字对了但位置是编的"。
@@ -99,6 +108,7 @@ METRIC_ORDER = [
     "budget_arithmetic_ok",
     "coord_coverage",
     "poi_support_rate",
+    "poi_exists_rate",
     "coord_mae_km",
     "intraday_travel_km_p95",
     "latency_s",
@@ -135,6 +145,7 @@ def thresholds_snapshot() -> dict[str, Any]:
         "coord_coverage_min": COORD_COVERAGE_MIN,
         "poi_name_match_ratio": POI_NAME_MATCH_RATIO,
         "poi_support_rate_min": POI_SUPPORT_RATE_MIN,
+        "poi_exists_rate_min": POI_EXISTS_RATE_MIN,
         "coord_mae_km_max": COORD_MAE_KM_MAX,
         "min_matches_for_mae": MIN_MATCHES_FOR_MAE,
     }

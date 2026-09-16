@@ -69,7 +69,8 @@ METRIC_NOTES: dict[str, str] = {
     "meal_slots_ok": "每天排满 3 餐",
     "budget_arithmetic_ok": "预算总额 = 四项之和,且各项与明细相符",
     "coord_coverage": "坐标落在目标城市范围内的比例。**门槛低**,抓的是整片跑错城市",
-    "poi_support_rate": "景点名能在冻结的真实 POI 库存里找到支撑的比例。**这是抓「编造」的地方**;是下限",
+    "poi_support_rate": "景点名能在**我录的 POI 库存**里找到支撑的比例。⚠️ 库存是 20 个关键词的**样本**,所以它测的是**库存覆盖率**,不是编造率 —— 偏低时先看 `poi_exists_rate`",
+    "poi_exists_rate": "拿景点名去**高德搜一次**,搜得到自己的比例。**这才是判断「编造」的那条**",
     "coord_mae_km": "匹配上的景点,行程坐标与真实坐标的平均偏差(km)。抓「名字对了但位置是编的」",
     "intraday_travel_km_p95": "单日景点间移动距离的 95 分位(km)。参考值,不判定",
     "latency_s": "端到端耗时(秒)",
@@ -81,10 +82,14 @@ METRIC_NOTES: dict[str, str] = {
 #
 # 为什么不把 14 个指标全铺开:表会宽到读不下去。这几列是"一眼看出哪条最差"
 # 所需的最小集合,完整数值在总览表和冻结文件里都有。
+#
+# `poi_support_rate` 和 `poi_exists_rate` **必须挨着** —— 两条的差值
+# (我的库存覆盖了多少 vs 名字到底真不真)本身就是结论,拆开就看不出来了。
 _DETAIL_COLUMNS = [
     "fallback_used",
     "schema_valid",
     "poi_support_rate",
+    "poi_exists_rate",
     "coord_coverage",
     "coord_mae_km",
     "budget_arithmetic_ok",
@@ -211,10 +216,18 @@ def _table(headers: Sequence[str], rows: Sequence[Sequence[str]]) -> list[str]:
 # (会渲染成 `**...是**下限**,...**`)。强调用文字,别用标记。
 _LIMITATIONS: list[tuple[str, str]] = [
     (
-        "`poi_support_rate` 是下限,不是真值",
-        "POI 库存只可能不完整,不可能错(它是真实高德的返回)。所以 "
-        "**没匹配上 ≠ 编造**,也可能是真实景点但没被那 20 个关键词搜到。"
-        "真实值 ≥ 报出来的数。",
+        "`poi_support_rate` 测的是「我的库存覆盖了多少」,不是「模型编没编」",
+        "库存是 20 个关键词搜出来的**样本**(每城 340~360 个),不是普查。"
+        "所以**没匹配上 ≠ 编造** —— 真实景点没被关键词命中就会被判成查无此物。"
+        "baseline 实测:41 个「未命中」里逐个核对后**没有一个**是编造。"
+        "要判断真伪请看 `poi_exists_rate`。",
+    ),
+    (
+        "`poi_exists_rate` 的判据是「搜到的像不像」,不是「有没有搜到」",
+        "高德对**编造**的名字不会返回空 —— 它总会硬凑一堆相关 POI 给你"
+        "(搜「紫金幻梦星际主题乐园」会返回「泡泡玛特城市乐园」)。"
+        "所以必须比名字相似度。另外它只覆盖**高德找得到**的地方:"
+        "偏远地区的小众景点可能真实存在但搜不到,那会被算成存疑。",
     ),
     (
         "`coord_coverage` 门槛低,单看它会漏掉一大类问题",
@@ -222,9 +235,9 @@ _LIMITATIONS: list[tuple[str, str]] = [
         "必须看 `coord_mae_km`。",
     ),
     (
-        "名字匹配本身有误差(实测约 88% 正确)",
-        "剩下 12% 里,「匹配到别的 POI」那一类会拿错误实体的坐标去比,"
-        "**诬告坐标是编的**。误差分析见 `metrics_grounding.py` 模块文档。",
+        "字符串名字匹配本身有误差(实测约 88% 正确)",
+        "`coord_mae_km` 靠它找对应物。「匹配到别的 POI」那一类会拿错误实体的"
+        "坐标去比,**诬告坐标是编的**。误差分析见 `metrics_grounding.py` 模块文档。",
     ),
     (
         "temperature=0 是评测配置,不是线上配置",

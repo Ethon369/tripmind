@@ -259,6 +259,54 @@ MUTATIONS: list[tuple[Path, str, str, str]] = [
         "        return [0.0, 0.0]",
         "坐标解析失败时返回 [0,0] 而不是 None —— 变成「几内亚湾海上」的假坐标",
     ),
+    # ---- metrics_grounding.py 的第二个 oracle(poi_exists_rate)----
+    (
+        GROUNDING,
+        '    return "weak" if sim >= 0.5 else "missing"',
+        '    return "missing"',
+        "「有点像」被算成编造 —— 名字只是拼得太长(如「太古里·春熙路商圈」)就被诬告",
+    ),
+    (
+        GROUNDING,
+        "    if sim >= thr:\n        return \"found\"",
+        "    if sim > 0.99:\n        return \"found\"",
+        "命中阈值形同虚设,要求几乎逐字相同 —— 真实景点成片被判成编造",
+    ),
+    (
+        GROUNDING,
+        "    if not isinstance(rec, dict):\n"
+        "        return \"unknown\"\n"
+        "    sim = rec.get(\"best_similarity\")\n"
+        "    if sim is None:\n"
+        "        return \"unknown\"",
+        "    if not isinstance(rec, dict) or rec.get(\"best_similarity\") is None:\n"
+        "        return \"missing\"",
+        "「没查过」被算成「不存在」—— 补缓存前后同一条行程的数字会自己变",
+    ),
+    (
+        GROUNDING,
+        '        if verdict == "found":\n            found += 1\n        elif verdict == "weak":',
+        '        if verdict in ("found", "weak"):\n            found += 1\n        elif verdict == "weak":',
+        "存疑的被算进分子 —— 编造的名字只要搜到个沾边的就能蒙混过关",
+    ),
+    (
+        GROUNDING,
+        '        else:\n            # 没查过 —— 「不知道」,不进分母,也不当成"不存在"\n            unknown += 1',
+        "        else:\n            missing += 1",
+        "「没查过」被当成「不存在」—— 缓存没覆盖到的名字全变成编造",
+    ),
+    (
+        GROUNDING,
+        "    rec = check.get(f\"{(city or '').strip()}|{normalize_name(name)}\")",
+        "    rec = check.get(f\"{(city or '').strip()}|{name}\")",
+        "查核对缓存时不归一化名字 —— 带括号限定语的景点名一个都查不到",
+    ),
+    (
+        GROUNDING,
+        "        sliced = {k: v for k, v in name_check.items() if k.startswith(prefix)}",
+        "        sliced = dict(name_check)",
+        "核对缓存不按城市切 —— 北京行程会拿上海的同名记录去判",
+    ),
     # ---- services/mcp_launcher.py ----
     (
         LAUNCHER,

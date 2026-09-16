@@ -45,7 +45,7 @@ from typing import Any, Sequence
 
 from . import config as cfg
 from .metrics import EvalContext, evaluate
-from .metrics_grounding import ground_truth_for, load_inventory
+from .metrics_grounding import ground_truth_for, load_inventory, load_name_check
 from .report import RequestResult, render_report
 
 # backend/ 目录(本文件在 backend/app/eval/ 下,上溯三层)
@@ -360,8 +360,18 @@ def do_record(args: argparse.Namespace) -> int:
 # ===========================================================================
 
 
-def replay(tag: str, frozen_dir: Path | str, inventory: Any) -> tuple[list[RequestResult], dict, list[str]]:
+def replay(
+    tag: str,
+    frozen_dir: Path | str,
+    inventory: Any,
+    name_check: dict[str, Any] | None = None,
+) -> tuple[list[RequestResult], dict, list[str]]:
     """读冻结的行程,算指标。
+
+    Args:
+        inventory: `data/frozen/amap/poi_inventory.json` 的内容(我录的 POI 样本)
+        name_check: `data/frozen/amap/poi_name_check.json` 的内容(拿名字去高德搜一次的结果)。
+            传 None 时 `poi_exists_rate` 会返回"算不出"而不是崩 —— 它是可选的第二个 oracle。
 
     Returns:
         (评测结果, 环境指纹, 警告列表)
@@ -388,9 +398,11 @@ def replay(tag: str, frozen_dir: Path | str, inventory: Any) -> tuple[list[Reque
 
         request = payload.get("request") or {}
         city = str(request.get("city") or "")
-        gt = ground_truth_for(city, inventory)
+        gt = ground_truth_for(city, inventory, name_check)
         if gt is None:
             warns.append(f"{payload.get('request_id')}: 没有 {city} 的冻结库存,接地性指标会算不出")
+        elif "name_check" not in gt and name_check:
+            warns.append(f"{payload.get('request_id')}: {city} 没有地名解析缓存,poi_exists_rate 会算不出")
 
         ctx = EvalContext(
             request=request,
@@ -412,15 +424,23 @@ def replay(tag: str, frozen_dir: Path | str, inventory: Any) -> tuple[list[Reque
 
 def do_replay(args: argparse.Namespace) -> int:
     inventory = load_inventory()
+    name_check = load_name_check()
     n_cities = len((inventory.get("cities") or {}))
-    results, provenance, warns = replay(args.tag, args.frozen_dir, inventory)
+
+    if not name_check:
+        print("⚠️  没有 data/frozen/amap/poi_name_check.json")
+        print("   → poi_exists_rate(判断「名字是否真实存在」的那条)会显示「算不出」")
+        print("   → 先跑:./venv/Scripts/python.exe scripts/check_poi_names.py")
+
+    results, provenance, warns = replay(args.tag, args.frozen_dir, inventory, name_check)
 
     for w in warns:
         print(f"⚠️  {w}")
     if provenance:
         provenance["source"] = f"data/frozen/plans/{args.tag}/"
         provenance["ground_truth"] = (
-            f"data/frozen/amap/poi_inventory.json({n_cities} 个城市)"
+            f"poi_inventory.json({n_cities} 个城市,我录的样本)"
+            + (f" + poi_name_check.json({len(name_check)} 条,逐名 POI 搜索)" if name_check else "")
         )
 
     text = render_report(

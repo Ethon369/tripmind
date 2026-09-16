@@ -17,10 +17,14 @@ from app.eval.metrics import EvalContext
 from app.eval.metrics_grounding import (
     best_match,
     candidate_names,
+    checked_verdict,
     ground_truth_for,
     load_inventory,
+    load_name_check,
     m_coord_mae_km,
+    m_poi_exists_rate,
     m_poi_support_rate,
+    name_check_for,
     name_similarity,
     normalize_name,
 )
@@ -493,3 +497,141 @@ class TestPoiSupportRateWithAlias:
         gt = {"city": "西安", "pois": ALIAS_POIS}
         m = m_poi_support_rate(ctx_with(attrs, gt))
         assert m.value == pytest.approx(0.5)
+
+
+# ===========================================================================
+# 第二个 oracle:拿名字去高德搜一次
+# ===========================================================================
+
+
+def make_check(pairs: dict[str, float]) -> dict:
+    """造一份逐名核对缓存。pairs: {景点名: 最高相似度}。"""
+    return {
+        f"北京|{normalize_name(name)}": {
+            "query": normalize_name(name),
+            "city": "北京",
+            "best_similarity": sim,
+            "best_name": name if sim >= 0.75 else "某个不相干的POI",
+        }
+        for name, sim in pairs.items()
+    }
+
+
+def ctx_with_check(attractions: list[dict], check: dict | None) -> EvalContext:
+    gt = make_gt()
+    if check is not None:
+        gt["name_check"] = check
+    return ctx_with(attractions, gt)
+
+
+class TestCheckedVerdict:
+    """判定只在这一处做 —— 别处不要再各自比较相似度。"""
+
+    def test_够像就是存在(self):
+        assert checked_verdict({"best_similarity": 1.0}) == "found"
+        assert checked_verdict({"best_similarity": cfg.POI_NAME_MATCH_RATIO}) == "found"
+
+    def test_有点像算存疑不算存在(self):
+        """名字可能只是拼得太长(「太古里·春熙路商圈」),不直接判为编造。"""
+        assert checked_verdict({"best_similarity": 0.6}) == "weak"
+
+    def test_搜出来全不相干才是编造(self):
+        assert checked_verdict({"best_similarity": 0.1}) == "missing"
+
+    def test_没查过是不知道而不是不存在(self):
+        """三态设计:把「没查过」读成「是编的」就是诬告。"""
+        assert checked_verdict(None) == "unknown"
+        assert checked_verdict({}) == "unknown"
+        assert checked_verdict({"best_similarity": None}) == "unknown"
+
+    def test_阈值可以覆盖(self):
+        assert checked_verdict({"best_similarity": 0.6}, threshold=0.5) == "found"
+
+
+class TestNameCheckFor:
+    def test_按城市和归一化名字查(self):
+        check = make_check({"故宫博物院": 1.0})
+        assert name_check_for("北京", "故宫博物院", check) is not None
+
+    def test_括号里的限定语不影响查找(self):
+        """和字符串匹配用同一套归一化,两个指标比的才是同一个东西。"""
+        check = make_check({"曲院风荷": 1.0})
+        assert name_check_for("北京", "曲院风荷（荷花区）", check) is not None
+
+    def test_别的城市查不到(self):
+        check = make_check({"故宫博物院": 1.0})
+        assert name_check_for("上海", "故宫博物院", check) is None
+
+
+class TestLoadNameCheck:
+    def test_文件不存在返回空(self, tmp_path):
+        assert load_name_check(tmp_path / "nope.json") == {}
+
+    def test_坏JSON返回空而不是抛(self, tmp_path):
+        p = tmp_path / "bad.json"
+        p.write_text("{坏", encoding="utf-8")
+        assert load_name_check(p) == {}
+
+    def test_正常读出来(self, tmp_path):
+        p = tmp_path / "c.json"
+        p.write_text(json.dumps({"entries": {"北京|外滩": {"best_similarity": 1.0}}}),
+                     encoding="utf-8")
+        assert "北京|外滩" in load_name_check(p)
+
+
+class TestPoiExistsRate:
+    def test_全真实就是满分(self):
+        attrs = [make_attraction("故宫博物院"), make_attraction("天坛公园")]
+        m = m_poi_exists_rate(ctx_with_check(attrs, make_check({"故宫博物院": 1.0, "天坛公园": 1.0})))
+        assert m.value == 1.0
+        assert m.ok is True
+
+    def test_编造的名字会被抓(self):
+        """这是这条指标存在的理由。"""
+        attrs = [make_attraction("故宫博物院"), make_attraction("紫金幻梦星际主题乐园")]
+        m = m_poi_exists_rate(ctx_with_check(
+            attrs, make_check({"故宫博物院": 1.0, "紫金幻梦星际主题乐园": 0.14})))
+        assert m.value == pytest.approx(0.5)
+        assert m.ok is False
+        assert "紫金幻梦星际主题乐园" in m.detail, "编造的名字要出现在详情里"
+
+    def test_存疑的算不进分子(self):
+        """「有点像」不是「存在」,不能拉高指标。"""
+        attrs = [make_attraction("故宫博物院"), make_attraction("北京环球影城主题公园")]
+        m = m_poi_exists_rate(ctx_with_check(
+            attrs, make_check({"故宫博物院": 1.0, "北京环球影城主题公园": 0.57})))
+        assert m.value == pytest.approx(0.5)
+        assert "存疑" in m.detail
+
+    def test_没查过的名字不进分母(self):
+        """「没查过」和「不存在」必须分开 —— 否则补缓存前后数字会自己变。"""
+        attrs = [make_attraction("故宫博物院"), make_attraction("某个没查过的")]
+        m = m_poi_exists_rate(ctx_with_check(attrs, make_check({"故宫博物院": 1.0})))
+        assert m.value == 1.0, "只有 1 个有判定,应该是 1/1 而不是 1/2"
+        assert "没查过" in m.detail
+
+    def test_没有缓存时返回算不出而不是不合格(self):
+        gt = make_gt()  # 没有 name_check 这一层
+        m = m_poi_exists_rate(ctx_with([make_attraction("故宫博物院")], gt))
+        assert m.value is None
+        assert m.ok is None, "没数据是不作判定,不是不合格"
+        assert "check_poi_names" in m.detail, "要告诉人下一步该干嘛"
+
+    def test_行程里没景点(self):
+        m = m_poi_exists_rate(ctx_with([], make_gt()))
+        assert m.ok is False
+
+
+class TestGroundTruthForWithCheck:
+    def test_两个_oracle_都塞进去(self):
+        inv = {"cities": {"北京": {"pois": [{"name": "故宫博物院", "location": [116.4, 39.9]}]}}}
+        check = {"北京|故宫博物院": {"best_similarity": 1.0},
+                 "上海|外滩": {"best_similarity": 1.0}}
+        gt = ground_truth_for("北京", inv, check)
+        assert gt["pois"]
+        assert set(gt["name_check"]) == {"北京|故宫博物院"}, "只该切出本城市的"
+
+    def test_没有核对缓存时只有_pois(self):
+        inv = {"cities": {"北京": {"pois": [{"name": "故宫博物院", "location": [116.4, 39.9]}]}}}
+        gt = ground_truth_for("北京", inv, {})
+        assert "name_check" not in gt

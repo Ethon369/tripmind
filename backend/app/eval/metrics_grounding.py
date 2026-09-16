@@ -52,8 +52,8 @@ ground truth 从哪来
 堆规则是在跟这个事实较劲,所以这里刻意停在最简的
 「相似度优先、同分取短」,并把误差率**量出来写在这里**。
 
-**真正的解法是让高德自己解析名字**(`maps_geo("东方明珠", "上海")`),
-而不是在本地猜字面。这是 P5 的 5c 要接上的东西,见模块文档结尾。
+**真正的解法是换个 oracle**,而不是在本地继续猜字面 —— 换成什么、以及
+为什么**不是** `maps_geo`,见模块文档结尾。结论是 `poi_exists_rate` 那条。
 
 三态设计在这里的用法
 --------------------
@@ -61,24 +61,38 @@ ground truth 从哪来
 20 个景点里只匹配上 1 个,那个"平均偏差"是在 1 个样本上算的,
 拿它判通过/不通过没有意义 —— 把「不知道」和「不合格」分开。
 
-下一步(5c):让高德自己解析名字,别再本地猜
--------------------------------------------
-现在这两个指标都靠**本地字符串匹配**去库存里找对应物,实测约 88% 正确
-(误差分析见上)。剩下的 12% 里,"匹配到别的 POI"那一类会直接污染
-`coord_mae_km` —— 拿错误实体的坐标去比,然后诬告坐标是编的。
+第二步(5c):换一个 oracle —— 但**不是** `maps_geo`
+--------------------------------------------------
+上面那 88% 是**本地字符串匹配**的准确率,它只回答了"我这个库存里有没有"。
+要回答"这个名字到底真不真",得换一个不受我采样限制的 oracle。
 
-正确的做法是用高德自己的地理编码接口:
+⚠️ **第一版用了 `maps_geo`(地理编码),是错的。** 拿 `国子监` 试了一下返回
+`level=兴趣点`,以为能用。跑完 74 个名字才发现:
 
-    maps_geo(address="东方明珠", city="上海")
-      → {"return": [{"location": "121.4998,31.2397", "level": "兴趣点", ...}]}
+    外滩      → level=住宅区          南京路步行街 → level=道路
+    豫园      → level=乡镇            东方明珠     → **返回空**
 
-它是**地名解析器**,天生处理俗称和别名,不需要我们猜字面。
-接上之后:
-- `poi_support_rate` 用返回是否为空判断"这个地方存不存在"
-- `coord_mae_km` 用返回的 `location` 当真实坐标
+**东方明珠是上海最著名的地标,`maps_geo` 返回空。** 因为它做的是**地址→坐标**
+的解析,把输入当地址看 —— POI 名不是地址,所以地标名解析不出来;而"外滩"这种
+区域名会被解析成行政区划。
 
-代价是每次评测要为行程里的景点各发一次请求 —— 但结果一样会**冻进
-缓存**(`recorder.py` 那套机制),所以只花一次,之后可复现。
+正确工具是 `maps_text_search`(**POI 关键词搜索**,就是录库存用的那个)。
+它天生处理俗称和别名,而且**不受我采样了哪些关键词的限制**。判别实测:
+
+    东方明珠  → 东方明珠广播电视塔          ✅
+    外滩      → 外滩                        ✅
+    宽窄巷子  → 宽窄巷子景区                ✅
+    紫金幻梦星际主题乐园 → 泡泡玛特城市乐园   ❌(编的名字,返回不相干的)
+    火星大饭店北京分店   → 南京大饭店         ❌
+
+⚠️ 判据是「**搜到的像不像**」,不是「有没有搜到」:高德对编造的名字**不会返回空**,
+总会硬凑一堆相关 POI 给你。光看返回非空会把编造的**全部放行**,而且看不出来。
+
+结果冻在 `data/frozen/amap/poi_name_check.json`(`scripts/check_poi_names.py` 生成),
+指标是 `poi_exists_rate`。判定逻辑只有一处:`checked_verdict()`。
+
+`poi_support_rate` **保留** —— 它测的是另一个东西(库存覆盖率),
+两条摆在一起看,差值本身就是结论。`scripts/audit_unmatched.py` 专门做这个对比。
 """
 
 from __future__ import annotations
@@ -394,6 +408,106 @@ def m_coord_mae_km(ctx: EvalContext) -> Metric:
     return Metric(name="coord_mae_km", value=round(mae, 3), ok=ok, detail=detail)
 
 
+def _name_check_slice(ctx: EvalContext) -> dict[str, Any] | None:
+    """该城市的逐名核对结果。None 表示**没查过**(不是"都不存在")。"""
+    gt = ctx.ground_truth
+    if not isinstance(gt, dict):
+        return None
+    check = gt.get("name_check")
+    return check if isinstance(check, dict) and check else None
+
+
+def m_poi_exists_rate(ctx: EvalContext) -> Metric:
+    """行程里的景点名,有多少是**真的存在**的。
+
+    **这才是判断「编造」的那条**,它和 `poi_support_rate` 测的不是一回事:
+
+    | 指标 | 拿什么当 oracle | 实际测的是 |
+    |---|---|---|
+    | `poi_support_rate` | 我录的 POI 库存(20 个关键词的**样本**) | **库存覆盖率** |
+    | `poi_exists_rate` | 拿名字去高德搜一次 | **名字是否真实存在** |
+
+    baseline 实测:被 `poi_support_rate` 判成"查无此物"的 41 个名字,逐个拿去高德搜,
+    **绝大多数都真实存在**(国子监、798艺术中心、上海中心大厦…)—— 它们只是没被
+    那 20 个关键词搜到,是**库存不全**,不是模型在编。
+
+    ⚠️ 判据是「**搜到的像不像**」,不是「有没有搜到」。
+    高德对编造的名字**不会返回空** —— 它总会硬凑一堆相关 POI 给你:
+
+        搜「紫金幻梦星际主题乐园」→ 返回「泡泡玛特城市乐园」「咘隆家族主题乐园」
+        搜「火星大饭店北京分店」  → 返回「南京大饭店」「北京饭店大堂」
+
+    所以必须比名字相似度,光看返回非空会把编造的名字全放行。
+    详见 `scripts/check_poi_names.py` 的说明。
+
+    `weak`(有点像但不够像)单独报,不直接判为编造 —— 它可能是名字拼得太长
+    (`太古里·春熙路商圈`),也可能是编的。分开报,读者自己判断。
+    """
+    attractions = _plan_attractions(ctx)
+    if not attractions:
+        return Metric(
+            name="poi_exists_rate",
+            value=None,
+            ok=False,
+            detail="行程里没有景点,无从判断",
+        )
+
+    check = _name_check_slice(ctx)
+    if check is None:
+        return Metric(
+            name="poi_exists_rate",
+            value=None,
+            ok=None,
+            detail="没有该城市的逐名核对缓存,无法判定(先跑 scripts/check_poi_names.py)",
+        )
+
+    city = str(ctx.request.get("city") or "")
+    found = weak = missing = unknown = 0
+    missing_names: list[str] = []
+    weak_names: list[str] = []
+
+    for a in attractions:
+        verdict = checked_verdict(name_check_for(city, a.get("name"), check))
+        if verdict == "found":
+            found += 1
+        elif verdict == "weak":
+            weak += 1
+            if len(weak_names) < 5:
+                weak_names.append(str(a.get("name") or "(无名)"))
+        elif verdict == "missing":
+            missing += 1
+            if len(missing_names) < 5:
+                missing_names.append(str(a.get("name") or "(无名)"))
+        else:
+            # 没查过 —— 「不知道」,不进分母,也不当成"不存在"
+            unknown += 1
+
+    judged = found + weak + missing
+    if judged == 0:
+        return Metric(
+            name="poi_exists_rate",
+            value=None,
+            ok=None,
+            detail=f"行程里 {unknown} 个景点名都不在缓存里,一个都判不了",
+        )
+
+    rate = found / judged
+    detail = f"{found}/{judged} 个景点名在高德那里搜得到自己"
+    if weak:
+        detail += f";{weak} 个只搜到有点像的(存疑,不算存在): {', '.join(weak_names)}"
+    if missing:
+        detail += f";{missing} 个搜出来全是**不相干的** POI(编造嫌疑): {', '.join(missing_names)}"
+    if unknown:
+        detail += f";另有 {unknown} 个没查过,未计入(跑 check_poi_names.py 可补上)"
+
+    return Metric(
+        name="poi_exists_rate",
+        value=round(rate, 4),
+        ok=rate >= cfg.POI_EXISTS_RATE_MIN,
+        detail=detail,
+    )
+
+
 # ===========================================================================
 # 库存的读写(给 scripts/recorder.py 和 run_eval.py 共用)
 # ===========================================================================
@@ -426,8 +540,86 @@ def load_inventory(path: Path | str | None = None) -> dict[str, Any]:
     return data
 
 
-def ground_truth_for(city: str, inventory: dict[str, Any] | None) -> dict[str, Any] | None:
-    """从整份库存里取出某个城市的那一份,喂给 `EvalContext.ground_truth`。"""
+def default_name_check_path() -> Path:
+    """`maps_text_search` 逐名核对结果的缓存位置。和 POI 库存同目录,同样是**要提交**的 ground truth。"""
+    from ..config import get_settings
+
+    return Path(get_settings().frozen_dir) / "amap" / "poi_name_check.json"
+
+
+def load_name_check(path: Path | str | None = None) -> dict[str, Any]:
+    """读 `scripts/check_poi_names.py` 冻结下来的逐名核对结果。
+
+    结构::
+
+        {"城市|归一化后的名字": {"best_similarity": 1.0, "best_name": "外滩", ...}}
+
+    ⚠️ 缓存里存的是**事实**(相似度)不是**判定**(是否命中)—— 阈值改了只需重算,
+    缓存不作废。判定在 `checked_verdict()` 里做。
+
+    文件不存在时返回空 —— 和 `load_inventory` 一个道理:第一次跑时应该得到一份
+    "这条指标算不出来"的报告,而不是崩溃。
+    """
+    p = Path(path) if path else default_name_check_path()
+    if not p.exists():
+        return {}
+    try:
+        with open(p, encoding="utf-8") as f:
+            data = json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return {}
+    entries = data.get("entries") if isinstance(data, dict) else None
+    return entries if isinstance(entries, dict) else {}
+
+
+def name_check_for(city: str, name: Any, check: dict[str, Any] | None) -> dict[str, Any] | None:
+    """某个景点名的核对记录。
+
+    返回 None 表示**没查过**,不等于"不存在"—— 三态设计的要求,
+    混起来会把"没查过"读成"是编的"。
+    """
+    if not isinstance(check, dict):
+        return None
+    rec = check.get(f"{(city or '').strip()}|{normalize_name(name)}")
+    return rec if isinstance(rec, dict) else None
+
+
+def checked_verdict(rec: dict[str, Any] | None, threshold: float | None = None) -> str:
+    """把核对记录归成三态。**判定只在这里做一次**,别处不要再各自比较。
+
+    - `found`   —— 搜到的 POI 里有名字跟它够像的(≥ `POI_NAME_MATCH_RATIO`)
+    - `weak`    —— 有点像但不够像。存疑区:可能是限定语拼得太长,也可能是编的
+    - `missing` —— 搜出来的全是**不相干**的 POI。这才是编造嫌疑
+
+    编造的名字不会让高德返回空 —— 高德总会硬凑一堆相关 POI 给你。所以判据是
+    **"搜到的像不像"**,不是"有没有搜到"。这是这个 oracle 最容易搞错的地方。
+    """
+    if not isinstance(rec, dict):
+        return "unknown"
+    sim = rec.get("best_similarity")
+    if sim is None:
+        return "unknown"
+    thr = cfg.POI_NAME_MATCH_RATIO if threshold is None else threshold
+    if sim >= thr:
+        return "found"
+    # 0.5 是个粗界:低于它基本可以认为搜到的和查询名没有关系
+    return "weak" if sim >= 0.5 else "missing"
+
+
+def ground_truth_for(
+    city: str,
+    inventory: dict[str, Any] | None,
+    name_check: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    """从整份库存里取出某个城市的那一份,喂给 `EvalContext.ground_truth`。
+
+    两个 oracle 都塞进同一个 dict:
+    - `pois`       我录的 POI 库存(20 个关键词的**样本**)—— `poi_support_rate` / `coord_mae_km` 用
+    - `name_check` 逐名做 POI 搜索的结果(不受采样限制)—— `poi_exists_rate` 用
+
+    为什么要两个:库存装不下"有名但没被关键词命中"的地方,于是会把真实景点判成
+    编造。baseline 实测就是这个问题。见模块文档「两个 oracle」。
+    """
     if not isinstance(inventory, dict):
         return None
     cities = inventory.get("cities")
@@ -439,8 +631,21 @@ def ground_truth_for(city: str, inventory: dict[str, Any] | None) -> dict[str, A
     pois = entry.get("pois")
     if not isinstance(pois, list) or not pois:
         return None
-    return {"city": city, "pois": pois}
+
+    gt: dict[str, Any] = {"city": city, "pois": pois}
+
+    # 逐名核对结果按城市切一份 —— 指标里就不用再关心 key 的拼法
+    if isinstance(name_check, dict) and name_check:
+        prefix = f"{(city or '').strip()}|"
+        sliced = {k: v for k, v in name_check.items() if k.startswith(prefix)}
+        if sliced:
+            gt["name_check"] = sliced
+
+    return gt
 
 
 # 注册表。evaluate() 会把这份和 metrics.ALL_METRICS 拼起来。
-GROUNDING_METRICS = [m_poi_support_rate, m_coord_mae_km]
+#
+# 顺序有讲究:`poi_exists_rate` 紧跟在 `poi_support_rate` 后面,报告里两条挨着显示 ——
+# 它们的差值(库存覆盖 vs 真实存在)本身就是结论。
+GROUNDING_METRICS = [m_poi_support_rate, m_poi_exists_rate, m_coord_mae_km]

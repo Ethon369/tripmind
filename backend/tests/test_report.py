@@ -184,9 +184,10 @@ class Test渲染:
         """不写局限,数字就会被读错。这一段是报告的一部分,不是装饰。"""
         text = _render([_res("a", [_m("fallback_used", 0.0, True)])])
         assert "这份报告的局限" in text
-        assert "下限" in text          # poi_support_rate 是下限
-        assert "88%" in text           # 名字匹配的实测误差率
-        assert "temperature=0" in text  # 评测配置 ≠ 线上配置
+        assert "没匹配上 ≠ 编造" in text     # 库存不全 ≠ 编造(baseline 实测出来的)
+        assert "poi_exists_rate" in text     # 必须指向真正判断编造的那条
+        assert "88%" in text                 # 字符串匹配的实测误差率
+        assert "temperature=0" in text       # 评测配置 ≠ 线上配置
 
     def test_局限标题里不嵌粗体标记(self):
         """标题渲染时外面会包一层 `**`,标题自己再带 `**` 就写坏了。
