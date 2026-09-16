@@ -93,64 +93,108 @@ tripmind/
 - 高德地图API密钥 (Web服务API和Web端(JS API))
 - LLM API密钥 (OpenAI/DeepSeek等)
 
-### 后端安装
+### 后端
 
-1. 进入后端目录
+**1. 创建虚拟环境并装依赖**
+
 ```bash
 cd backend
-```
-
-2. 创建虚拟环境
-```bash
 python -m venv venv
-source venv/bin/activate  # Windows: venv\Scripts\activate
+
+# Windows
+./venv/Scripts/python.exe -m pip install -r requirements.txt
+# macOS / Linux
+# ./venv/bin/python -m pip install -r requirements.txt
 ```
 
-3. 安装依赖
-```bash
-pip install -r requirements.txt
-```
+> **不需要先 `activate`。** 下面所有命令都直接指向 venv 里的解释器,
+> 效果一样而且更不容易出错。后端启动高德 MCP 服务时也会自己找 venv 里的
+> `uvx`,不依赖 PATH —— 所以"忘了激活"不会再让工具静默失效。
 
-4. 配置环境变量
+**2. 配置环境变量**
+
 ```bash
 cp .env.example .env
-# 编辑 .env,把其中的占位符替换成你自己的密钥
-# 需要填:LLM_API_KEY、AMAP_API_KEY、UNSPLASH_ACCESS_KEY、UNSPLASH_SECRET_KEY
+# 必填:
+#   LLM_API_KEY      你的 LLM key
+#   AMAP_API_KEY     高德 **Web服务** Key(后端调 MCP 用这个)
+#
+# 用 DeepSeek 的话这两个也要改(`.env.example` 里的默认值指向别的服务):
+#   LLM_BASE_URL=https://api.deepseek.com     ← 注意**不带** /v1
+#   LLM_MODEL_ID=<你的模型名>                  ← 在服务商控制台查,别照抄
+#
+# 可留空:
+#   UNSPLASH_ACCESS_KEY / UNSPLASH_SECRET_KEY   留空只是景点没配图
+#   EMBED_* / QDRANT_*                          只有开 RAG(ENABLE_RAG)才用得上
 ```
 
 > `.env` 已在 `.gitignore` 中,不会被提交。
 
-5. 启动后端服务
+**3. 启动**
+
 ```bash
-uvicorn app.api.main:app --reload --host 0.0.0.0 --port 8001
+# Windows
+./venv/Scripts/python.exe run.py
+# macOS / Linux
+# ./venv/bin/python run.py
 ```
 
-### 前端安装
+启动后:`http://127.0.0.1:8001/docs`
 
-1. 进入前端目录
+**4. 确认真的起来了(别跳过这步)**
+
+```bash
+curl http://127.0.0.1:8001/api/trip/health
+```
+
+返回里的 **`mcp_tools_count` 必须是 `16`**。
+
+> ⚠️ 这是这个项目最容易踩的坑:高德工具起不来时,**服务照常启动、接口照常返回
+> 200、不报任何错**,但 agent 会转去**编造**景点和坐标,而你看不出来。
+> 所以不要凭"返回 200"下结论 —— 要么看这个数字,要么看启动日志里
+> `✅ 工具 'amap' 已展开为 16 个独立工具`。
+>
+> 数字不是 16 时,先确认 `AMAP_API_KEY` 填了、`./venv/Scripts/uvx.exe` 存在。
+
+### 前端
+
+**1. 装依赖**
+
 ```bash
 cd frontend
-```
-
-2. 安装依赖
-```bash
 npm install
 ```
 
-3. 配置环境变量
+**2. 配置环境变量**
+
 ```bash
 cp .env.example .env
-# 编辑 .env,填入你的高德地图 Web服务 Key 和 Web端 JS API Key
+# 编辑 .env,填入高德 **Web端(JS API)** Key
 ```
 
+> 注意前端要的是 **Web端(JS API)** 的 Key,后端要的是 **Web服务** 的 Key ——
+> 两个不一样,在高德控制台要分别申请。
+>
 > `VITE_` 前缀的变量会被打包进前端产物,请勿在此放入需要保密的密钥。
 
-4. 启动开发服务器
+**3. 启动**
+
 ```bash
 npm run dev
 ```
 
-5. 打开浏览器访问 `http://localhost:5173`
+Windows PowerShell 下要用 `npm.cmd`:
+```powershell
+npm.cmd run dev        # PowerShell 执行策略会挡 npm.ps1
+```
+
+**4. 打开浏览器访问 `http://127.0.0.1:5173`**
+
+> 用 `127.0.0.1` 而不是 `localhost`:Windows 上 `localhost` 会优先解析成 IPv6
+> (`::1`),可能连到一个**别的服务**上,表现成"后端好像没启动"。
+
+前端发的是**相对路径**请求,由 vite proxy 转发到后端 —— 所以后端换端口
+只需要改 `frontend/vite.config.ts` 那一处。
 
 ## 📝 使用指南
 
