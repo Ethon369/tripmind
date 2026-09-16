@@ -320,7 +320,34 @@ pydantic 模型那步就被拒了,根本传不到这里。留一段永远不执�
 光看"返回非空"会把编造的名字**全部放行**,而且看不出来。必须比名字相似度。
 见 `scripts/check_poi_names.py`,判定逻辑集中在 `metrics_grounding.checked_verdict()`。
 
-### 9. Python 3.14,不要碰 torch / sentence-transformers
+### 9. httpx 会把「启动那一刻的系统代理」记死在客户端里
+
+后端报 `WinError 10061 由于目标计算机积极拒绝` / `openai.APIConnectionError`,
+但**同一台机器上 `curl` 同一个地址却通** —— 大概率是这个:
+
+- httpx 的 `trust_env` 会调 `urllib.request.getproxies()`,它在 **Windows 上会
+  回退去读系统注册表**里的代理设置(VPN / Clash 这类工具写在那儿)
+- 而代理是在**客户端构造那一刻**解析的。`get_llm()` 是单例,所以那个 httpx
+  客户端只在**后端启动时**读一次代理
+- **之后你把 VPN 关掉,httpx 还在往那个已经没人监听的端口发请求**
+
+三条症状同时出现就是它:①`curl` 通、后端不通(curl 只读环境变量,不读注册表);
+②重启后端就好了;③日志 traceback 里有一行 `httpcore/_sync/http_proxy.py`。
+
+```bash
+# 排查:当前实际生效的代理
+cd backend && ./venv/Scripts/python.exe -c "from urllib.request import getproxies; print(getproxies())"
+# 返回 {} 说明现在没有代理,重启后端即可恢复
+```
+
+表现是"点生成,弹『本次未能生成行程内容』" —— 那是降级路径**正常工作**
+(LLM 连不上 → 返回空框架,而不是编一份假的)。弹窗里现在会带上原因。
+
+> ⚠️ 别用 `reg query` 查代理 —— Git Bash 里**没有 `reg` 命令**,它会以
+> `command not found` 失败。如果你只 grep 关键字,看到的是一片空白,
+> **极易误读成"注册表里没有代理"**(这个误判真发生过)。
+
+### 10. Python 3.14,不要碰 torch / sentence-transformers
 
 没有预编译 wheel,Windows 下装必失败。RAG 的 embedding 走硅基流动的 REST 接口
 (`BAAI/bge-m3`,1024 维)。这也是不引 ORM、用 stdlib `sqlite3` 的原因。

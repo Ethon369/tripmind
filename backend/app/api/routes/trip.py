@@ -105,10 +105,20 @@ def plan_trip(request: TripRequest):
         # ⚠️ 降级**不等于失败**:记录照样落库(status='fallback'),历史页看得到,
         # 只是它明确标着自己没内容。
         if observer.fallback_used:
+            # 把**失败原因**也带进 message。
+            #
+            # 原来只写"请稍后重试" —— 那句话在某些原因下是**错的建议**:
+            # LLM 连不上、key 失效、代理配错,重试多少次都一样。
+            # 真实踩过:用户看到这句话以为程序出 bug 了,而根因在后端日志里
+            # (httpx 把启动那一刻的系统代理记死在客户端里,代理关了就再也连不上)。
+            #
+            # message 是用户在**弹窗里唯一能看到的东西**(降级时 success=False,
+            # 前端不会跳结果页),所以原因必须出现在这儿。
+            why = (observer.warnings or ["原因未记录"])[0]
             print("⚠️  本次降级,返回 success=False(空框架,未编造内容)\n")
             return TripPlanResponse(
                 success=False,
-                message="本次未能生成行程内容,已保存为空白记录 —— 请稍后重试",
+                message=f"本次未能生成行程内容({why})。已存为空白记录,可在「历史行程」里查看",
                 data=trip_plan,
                 plan_id=plan_id,
             )
