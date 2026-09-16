@@ -46,11 +46,28 @@ npm.cmd run dev        # 用 npm.cmd 不用 npm —— PowerShell 执行策略�
 # RAG 环境自检(Qdrant 可连 / embedding 维度 1024 / markitdown 可导入)
 cd backend && ./venv/Scripts/python.exe scripts/check_rag_env.py
 
+# 单元测试(首次先装测试依赖:./venv/Scripts/python.exe -m pip install -r requirements-dev.txt)
+cd backend && ./venv/Scripts/python.exe -m pytest tests/ -q
+
+# 变异测试 —— 故意改坏实现,确认测试会红(证明测试真的在起作用,不是走过场)
+cd backend && ./venv/Scripts/python.exe scripts/mutation_check.py
+
 # 前端构建(会跑 vue-tsc 类型检查;noUnusedLocals 开着,留个没用的 import 就构建失败)
 cd frontend && npm.cmd run build
 ```
 
-目前**没有单元测试**。`app/eval/metrics.py` 的纯函数是第一批该补测试的地方(见升级路线 P5)。
+### 测试
+
+测试在 `backend/tests/`,只覆盖 `app/eval/` 下的**纯函数**(指标、地理计算)。
+这些函数不碰网络、不碰数据库、不调 LLM,构造一个 `EvalContext` 就能验证,
+所以跑一轮不到 1 秒。
+
+`tests/conftest.py` 里有构造行程的辅助函数(`make_plan` / `make_day` / ...),
+默认造一份**健康的**行程;测试想验证某个问题能被抓到,就只改坏那一处。
+
+**测试全绿不等于测试有效。** 一个 `assert True` 也能全绿。所以改完指标函数要跑
+`scripts/mutation_check.py` —— 它故意把实现改坏,确认对应的测试会红。
+改坏了却没人报错,说明那段逻辑没被测到。
 
 ## 架构大图
 

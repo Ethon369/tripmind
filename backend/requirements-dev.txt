@@ -1,0 +1,20 @@
+# 开发/测试依赖 —— 与 requirements.txt 分开
+#
+# 为什么不合并进 requirements.txt:
+# 那份是**部署清单**,装的是项目跑起来需要的东西。pytest 只有在开发时
+# 写测试/跑测试才用得上,部署到服务器上纯属多余。分开之后:
+#   pip install -r requirements.txt          → 部署
+#   pip install -r requirements-dev.txt      → 开发(含上面那份)
+#
+# 用法:
+#   cd backend
+#   ./venv/Scripts/python.exe -m pip install -r requirements-dev.txt
+#   ./venv/Scripts/python.exe -m pytest tests/ -q
+
+-r requirements.txt
+
+# 测试框架。
+# 选 pytest 而不是 stdlib unittest:测试函数直接写 `def test_xxx():`
+# 加 `assert`,不用继承 TestCase、不用记 assertEqual 之类的方法名。
+# 另外它的失败输出会直接显示 assert 两边实际是什么值,排查快很多。
+pytest>=8.0.0
