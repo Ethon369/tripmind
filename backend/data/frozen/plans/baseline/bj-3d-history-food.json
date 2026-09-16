@@ -1,0 +1,359 @@
+{
+  "request_id": "bj-3d-history-food",
+  "provenance": {
+    "recorded_at": "2026-09-16T19:37:40",
+    "git_sha": "2cc443b",
+    "git_dirty": false,
+    "agent_mode": "pipeline",
+    "rag_enabled": false,
+    "model": "deepseek-flash",
+    "temperature": 0.0,
+    "metrics_version": "2026-09-16"
+  },
+  "request": {
+    "id": "bj-3d-history-food",
+    "city": "北京",
+    "start_date": "2026-10-01",
+    "end_date": "2026-10-03",
+    "travel_days": 3,
+    "transportation": "公共交通",
+    "accommodation": "经济型酒店",
+    "preferences": [
+      "历史文化",
+      "美食"
+    ],
+    "free_text_input": ""
+  },
+  "plan": {
+    "city": "北京",
+    "start_date": "2026-10-01",
+    "end_date": "2026-10-03",
+    "days": [
+      {
+        "date": "2026-10-01",
+        "day_index": 0,
+        "description": "第一天：天安门广场-故宫博物院-中国国家博物馆-正阳门箭楼。上午游览故宫博物院（含交泰殿），感受明清皇家宫殿的宏伟；下午参观中国国家博物馆，了解中华文明历史；傍晚前往正阳门箭楼，欣赏前门大街夜景，品尝老北京美食。",
+        "transportation": "公共交通（地铁1号线、8号线，步行）",
+        "accommodation": "经济型酒店",
+        "hotel": {
+          "name": "贞德麟宾馆（安贞医院安华桥地铁店）",
+          "address": "安贞西里四区",
+          "location": {
+            "longitude": 116.404,
+            "latitude": 39.972
+          },
+          "price_range": "200-300元",
+          "rating": "4.2",
+          "distance": "距离天安门广场约10公里",
+          "type": "经济型酒店",
+          "estimated_cost": 250
+        },
+        "attractions": [
+          {
+            "name": "故宫博物院",
+            "address": "景山前街4号",
+            "location": {
+              "longitude": 116.397128,
+              "latitude": 39.916527
+            },
+            "visit_duration": 180,
+            "description": "中国明清两代的皇家宫殿，世界文化遗产，拥有丰富的文物收藏和宏伟的建筑群。建议提前预约门票，从午门进入，游览中轴线主要宫殿。",
+            "category": "世界文化遗产",
+            "rating": null,
+            "photos": [],
+            "poi_id": "",
+            "image_url": null,
+            "ticket_price": 60
+          },
+          {
+            "name": "中国国家博物馆",
+            "address": "东长安街16号天安门广场东侧",
+            "location": {
+              "longitude": 116.407,
+              "latitude": 39.905
+            },
+            "visit_duration": 150,
+            "description": "中国最高历史文化艺术殿堂，藏品丰富，涵盖古代文物、近现代文物等。需提前预约，免费参观。",
+            "category": "博物馆",
+            "rating": null,
+            "photos": [],
+            "poi_id": "",
+            "image_url": null,
+            "ticket_price": 0
+          },
+          {
+            "name": "正阳门箭楼",
+            "address": "前门大街2号前门商业区A2地块",
+            "location": {
+              "longitude": 116.397,
+              "latitude": 39.9
+            },
+            "visit_duration": 60,
+            "description": "北京内城正南门，前门大街的标志性建筑，可登楼俯瞰前门大街和天安门广场。",
+            "category": "古迹",
+            "rating": null,
+            "photos": [],
+            "poi_id": "",
+            "image_url": null,
+            "ticket_price": 20
+          }
+        ],
+        "meals": [
+          {
+            "type": "breakfast",
+            "name": "安贞医院附近小吃店",
+            "address": null,
+            "location": null,
+            "description": "豆汁、焦圈、包子等老北京早点",
+            "estimated_cost": 30
+          },
+          {
+            "type": "lunch",
+            "name": "四季民福烤鸭店（故宫店）",
+            "address": null,
+            "location": null,
+            "description": "北京烤鸭、京味菜，靠近故宫",
+            "estimated_cost": 50
+          },
+          {
+            "type": "dinner",
+            "name": "全聚德（前门店）",
+            "address": null,
+            "location": null,
+            "description": "百年老字号烤鸭，体验正宗北京烤鸭",
+            "estimated_cost": 80
+          }
+        ]
+      },
+      {
+        "date": "2026-10-02",
+        "day_index": 1,
+        "description": "第二天：八达岭长城-中国考古博物馆。上午前往八达岭长城，攀登世界文化遗产，感受长城雄伟；下午返回市区，参观中国考古博物馆，了解中国考古学成就。",
+        "transportation": "公共交通（地铁8号线转S2线至八达岭，返回后地铁8号线至奥林匹克公园）",
+        "accommodation": "经济型酒店",
+        "hotel": {
+          "name": "贞德麟宾馆（安贞医院安华桥地铁店）",
+          "address": "安贞西里四区",
+          "location": {
+            "longitude": 116.404,
+            "latitude": 39.972
+          },
+          "price_range": "200-300元",
+          "rating": "4.2",
+          "distance": "距离八达岭长城约70公里",
+          "type": "经济型酒店",
+          "estimated_cost": 250
+        },
+        "attractions": [
+          {
+            "name": "八达岭长城",
+            "address": "G6京藏高速",
+            "location": {
+              "longitude": 116.016,
+              "latitude": 40.356
+            },
+            "visit_duration": 240,
+            "description": "万里长城的精华段，世界文化遗产，地势险峻，景色壮观。建议早上出发，乘坐S2线或公交前往，预留充足时间。",
+            "category": "世界文化遗产",
+            "rating": null,
+            "photos": [],
+            "poi_id": "",
+            "image_url": null,
+            "ticket_price": 40
+          },
+          {
+            "name": "中国考古博物馆",
+            "address": "体育场北路与北辰东路交叉口中国历史研究院1-4层",
+            "location": {
+              "longitude": 116.396,
+              "latitude": 40.003
+            },
+            "visit_duration": 120,
+            "description": "展示中国考古学重大成就，馆藏文物丰富，需提前预约，免费参观。",
+            "category": "博物馆",
+            "rating": null,
+            "photos": [],
+            "poi_id": "",
+            "image_url": null,
+            "ticket_price": 0
+          }
+        ],
+        "meals": [
+          {
+            "type": "breakfast",
+            "name": "酒店附近早餐店",
+            "address": null,
+            "location": null,
+            "description": "包子、豆浆、油条",
+            "estimated_cost": 20
+          },
+          {
+            "type": "lunch",
+            "name": "八达岭长城附近餐厅",
+            "address": null,
+            "location": null,
+            "description": "农家菜、面条等简餐",
+            "estimated_cost": 60
+          },
+          {
+            "type": "dinner",
+            "name": "老北京涮肉（奥林匹克公园店）",
+            "address": null,
+            "location": null,
+            "description": "铜锅涮肉，体验老北京火锅",
+            "estimated_cost": 80
+          }
+        ]
+      },
+      {
+        "date": "2026-10-03",
+        "day_index": 2,
+        "description": "第三天：国子监-北京古观象台-首都博物馆。上午参观国子监，感受古代最高学府氛围；下午游览北京古观象台，了解古代天文成就；随后参观首都博物馆，品味北京历史文化。",
+        "transportation": "公共交通（地铁8号线、2号线、1号线）",
+        "accommodation": "经济型酒店",
+        "hotel": {
+          "name": "贞德麟宾馆（安贞医院安华桥地铁店）",
+          "address": "安贞西里四区",
+          "location": {
+            "longitude": 116.404,
+            "latitude": 39.972
+          },
+          "price_range": "200-300元",
+          "rating": "4.2",
+          "distance": "距离国子监约5公里",
+          "type": "经济型酒店",
+          "estimated_cost": 250
+        },
+        "attractions": [
+          {
+            "name": "国子监",
+            "address": "国子监街13-15号",
+            "location": {
+              "longitude": 116.409,
+              "latitude": 39.947
+            },
+            "visit_duration": 90,
+            "description": "元、明、清三代国家设立的最高学府和管理教育的行政机构，又称“太学”，建筑古朴，文化底蕴深厚。",
+            "category": "古迹",
+            "rating": null,
+            "photos": [],
+            "poi_id": "",
+            "image_url": null,
+            "ticket_price": 30
+          },
+          {
+            "name": "北京古观象台",
+            "address": "建国门大街裱褙胡同2号",
+            "location": {
+              "longitude": 116.434,
+              "latitude": 39.908
+            },
+            "visit_duration": 60,
+            "description": "明清两代皇家天文台，现存古代天文仪器，是世界现存最古老的天文台之一。",
+            "category": "古迹",
+            "rating": null,
+            "photos": [],
+            "poi_id": "",
+            "image_url": null,
+            "ticket_price": 20
+          },
+          {
+            "name": "首都博物馆",
+            "address": "复兴门外大街16号",
+            "location": {
+              "longitude": 116.341,
+              "latitude": 39.907
+            },
+            "visit_duration": 150,
+            "description": "大型综合博物馆，展示北京历史文化、民俗、艺术等，需提前预约，免费参观。",
+            "category": "博物馆",
+            "rating": null,
+            "photos": [],
+            "poi_id": "",
+            "image_url": null,
+            "ticket_price": 0
+          }
+        ],
+        "meals": [
+          {
+            "type": "breakfast",
+            "name": "酒店附近早餐店",
+            "address": null,
+            "location": null,
+            "description": "炒肝、包子",
+            "estimated_cost": 30
+          },
+          {
+            "type": "lunch",
+            "name": "馅老满（国子监店）",
+            "address": null,
+            "location": null,
+            "description": "老北京饺子、炸酱面",
+            "estimated_cost": 50
+          },
+          {
+            "type": "dinner",
+            "name": "鸿宾楼（复兴门店）",
+            "address": null,
+            "location": null,
+            "description": "清真老字号，推荐红烧牛尾、芫爆散丹",
+            "estimated_cost": 80
+          }
+        ]
+      }
+    ],
+    "weather_info": [
+      {
+        "date": "2026-10-01",
+        "day_weather": "晴",
+        "night_weather": "多云",
+        "day_temp": 28,
+        "night_temp": 16,
+        "wind_direction": "南风",
+        "wind_power": "1-3级"
+      },
+      {
+        "date": "2026-10-02",
+        "day_weather": "多云",
+        "night_weather": "晴",
+        "day_temp": 27,
+        "night_temp": 15,
+        "wind_direction": "东南风",
+        "wind_power": "1-3级"
+      },
+      {
+        "date": "2026-10-03",
+        "day_weather": "晴",
+        "night_weather": "晴",
+        "day_temp": 26,
+        "night_temp": 14,
+        "wind_direction": "北风",
+        "wind_power": "1-3级"
+      }
+    ],
+    "overall_suggestions": "1. 国庆期间北京游客较多，故宫、中国国家博物馆、八达岭长城等热门景点务必提前7天在官方平台预约门票。2. 建议使用“亿通行”APP乘坐公共交通，地铁出行方便快捷。3. 昼夜温差较大，请携带薄外套，早晚注意保暖。4. 八达岭长城路程较远，建议早上7点前出发，乘坐S2线或877路公交，预留充足时间。5. 品尝北京美食可前往前门大街、王府井、簋街等地，注意选择正规餐厅。6. 住宿建议选择地铁沿线经济型酒店，如安华桥附近，交通便利。",
+    "budget": {
+      "total_attractions": 170,
+      "total_hotels": 750,
+      "total_meals": 480,
+      "total_transportation": 150,
+      "total": 1550
+    }
+  },
+  "run": {
+    "ok": true,
+    "error": null,
+    "fallback_used": false,
+    "warnings": [],
+    "elapsed_ms": 50079,
+    "usage": {
+      "llm_calls": 7,
+      "prompt_tokens": 16868,
+      "completion_tokens": 9817,
+      "total_tokens": 26685,
+      "cost_cny": 0.044595,
+      "usage_source": "api",
+      "priced": true
+    }
+  }
+}

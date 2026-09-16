@@ -1,0 +1,375 @@
+{
+  "request_id": "sh-3d-modern",
+  "provenance": {
+    "recorded_at": "2026-09-16T19:37:40",
+    "git_sha": "2cc443b",
+    "git_dirty": false,
+    "agent_mode": "pipeline",
+    "rag_enabled": false,
+    "model": "deepseek-flash",
+    "temperature": 0.0,
+    "metrics_version": "2026-09-16"
+  },
+  "request": {
+    "id": "sh-3d-modern",
+    "city": "上海",
+    "start_date": "2026-10-02",
+    "end_date": "2026-10-04",
+    "travel_days": 3,
+    "transportation": "公共交通",
+    "accommodation": "高档酒店",
+    "preferences": [
+      "现代都市",
+      "建筑"
+    ],
+    "free_text_input": ""
+  },
+  "plan": {
+    "city": "上海",
+    "start_date": "2026-10-02",
+    "end_date": "2026-10-04",
+    "days": [
+      {
+        "date": "2026-10-02",
+        "day_index": 0,
+        "description": "第1天：外滩经典与现代建筑之旅。上午漫步外滩观景大道，欣赏浦江两岸风光；下午参观外滩历史建筑群，随后逛南京路步行街，感受上海现代商业氛围。",
+        "transportation": "地铁2号线南京东路站，步行",
+        "accommodation": "高档酒店",
+        "hotel": {
+          "name": "上海浦东假日酒店",
+          "address": "上海市浦东新区东方路899号",
+          "location": {
+            "longitude": 121.5253,
+            "latitude": 31.2286
+          },
+          "price_range": "800-1200元",
+          "rating": "4.6",
+          "distance": "距离陆家嘴约3公里",
+          "type": "高档酒店",
+          "estimated_cost": 800
+        },
+        "attractions": [
+          {
+            "name": "外滩",
+            "address": "上海市黄浦区中山东一路",
+            "location": {
+              "longitude": 121.4903,
+              "latitude": 31.2397
+            },
+            "visit_duration": 120,
+            "description": "上海最著名的城市地标，沿黄浦江而建，可欣赏浦东陆家嘴摩天大楼天际线与浦西历史建筑群交相辉映的壮丽景色。",
+            "category": "城市地标",
+            "rating": null,
+            "photos": [],
+            "poi_id": "",
+            "image_url": null,
+            "ticket_price": 0
+          },
+          {
+            "name": "外滩建筑群",
+            "address": "上海市黄浦区中山东一路18号",
+            "location": {
+              "longitude": 121.49,
+              "latitude": 31.24
+            },
+            "visit_duration": 90,
+            "description": "外滩沿线汇集了52幢风格迥异的古典复兴大楼，被誉为“万国建筑博览群”，是上海历史与现代交融的象征。",
+            "category": "历史建筑",
+            "rating": null,
+            "photos": [],
+            "poi_id": "",
+            "image_url": null,
+            "ticket_price": 0
+          },
+          {
+            "name": "南京路步行街",
+            "address": "上海市黄浦区南京东路",
+            "location": {
+              "longitude": 121.4753,
+              "latitude": 31.2354
+            },
+            "visit_duration": 90,
+            "description": "上海最繁华的商业街，汇聚了众多现代商场、老字号店铺和时尚品牌，是体验上海都市商业活力的绝佳去处。",
+            "category": "商业步行街",
+            "rating": null,
+            "photos": [],
+            "poi_id": "",
+            "image_url": null,
+            "ticket_price": 0
+          }
+        ],
+        "meals": [
+          {
+            "type": "breakfast",
+            "name": "酒店自助早餐",
+            "address": null,
+            "location": null,
+            "description": "在酒店享用丰盛的自助早餐，开启一天旅程。",
+            "estimated_cost": 40
+          },
+          {
+            "type": "lunch",
+            "name": "南京路老盛昌汤包",
+            "address": null,
+            "location": null,
+            "description": "品尝上海特色汤包、生煎等本帮小吃，经济实惠。",
+            "estimated_cost": 70
+          },
+          {
+            "type": "dinner",
+            "name": "外滩上海姥姥餐厅",
+            "address": null,
+            "location": null,
+            "description": "地道本帮菜，推荐红烧肉、糖醋小排，临窗可赏外滩夜景。",
+            "estimated_cost": 120
+          }
+        ]
+      },
+      {
+        "date": "2026-10-03",
+        "day_index": 1,
+        "description": "第2天：陆家嘴摩天大楼探索。上午登东方明珠俯瞰全城；下午参观上海中心大厦观光厅，随后漫步陆家嘴中心绿地，感受现代都市的绿色呼吸。",
+        "transportation": "地铁2号线陆家嘴站，步行",
+        "accommodation": "高档酒店",
+        "hotel": {
+          "name": "上海浦东假日酒店",
+          "address": "上海市浦东新区东方路899号",
+          "location": {
+            "longitude": 121.5253,
+            "latitude": 31.2286
+          },
+          "price_range": "800-1200元",
+          "rating": "4.6",
+          "distance": "距离陆家嘴约3公里",
+          "type": "高档酒店",
+          "estimated_cost": 800
+        },
+        "attractions": [
+          {
+            "name": "东方明珠",
+            "address": "上海市浦东新区世纪大道1号",
+            "location": {
+              "longitude": 121.4998,
+              "latitude": 31.2397
+            },
+            "visit_duration": 150,
+            "description": "上海标志性电视塔，拥有259米全透明悬空观光廊和267米旋转餐厅，可360度俯瞰上海全景。",
+            "category": "地标建筑",
+            "rating": null,
+            "photos": [],
+            "poi_id": "",
+            "image_url": null,
+            "ticket_price": 180
+          },
+          {
+            "name": "上海中心大厦",
+            "address": "上海市浦东新区银城中路501号",
+            "location": {
+              "longitude": 121.5055,
+              "latitude": 31.2336
+            },
+            "visit_duration": 120,
+            "description": "中国第一高楼，118层观光厅“上海之巅”可俯瞰整个上海，体验高速电梯和云端观景。",
+            "category": "摩天大楼",
+            "rating": null,
+            "photos": [],
+            "poi_id": "",
+            "image_url": null,
+            "ticket_price": 180
+          },
+          {
+            "name": "陆家嘴中心绿地",
+            "address": "上海市浦东新区陆家嘴环路717号",
+            "location": {
+              "longitude": 121.501,
+              "latitude": 31.239
+            },
+            "visit_duration": 60,
+            "description": "陆家嘴金融贸易区内的城市绿地，绿草如茵，湖光倒影，是高楼林立中的一片宁静绿洲。",
+            "category": "城市绿地",
+            "rating": null,
+            "photos": [],
+            "poi_id": "",
+            "image_url": null,
+            "ticket_price": 0
+          }
+        ],
+        "meals": [
+          {
+            "type": "breakfast",
+            "name": "酒店自助早餐",
+            "address": null,
+            "location": null,
+            "description": "酒店内享用自助早餐。",
+            "estimated_cost": 40
+          },
+          {
+            "type": "lunch",
+            "name": "陆家嘴正大广场餐厅",
+            "address": null,
+            "location": null,
+            "description": "正大广场内各类餐饮选择丰富，推荐港式茶餐厅或日料。",
+            "estimated_cost": 80
+          },
+          {
+            "type": "dinner",
+            "name": "国金中心商场餐厅",
+            "address": null,
+            "location": null,
+            "description": "陆家嘴国金中心内高端餐厅，可品尝江浙菜或西餐，环境优雅。",
+            "estimated_cost": 150
+          }
+        ]
+      },
+      {
+        "date": "2026-10-04",
+        "day_index": 2,
+        "description": "第3天：现代都市文化与建筑巡礼。上午逛新天地，感受石库门与现代商业的融合；下午参观上海城市规划展示馆，了解城市发展脉络，随后漫步外滩源，欣赏历史建筑与现代设计的碰撞。",
+        "transportation": "地铁1号线黄陂南路站、8号线人民广场站，步行",
+        "accommodation": "高档酒店",
+        "hotel": {
+          "name": "上海浦东假日酒店",
+          "address": "上海市浦东新区东方路899号",
+          "location": {
+            "longitude": 121.5253,
+            "latitude": 31.2286
+          },
+          "price_range": "800-1200元",
+          "rating": "4.6",
+          "distance": "距离新天地约6公里",
+          "type": "高档酒店",
+          "estimated_cost": 800
+        },
+        "attractions": [
+          {
+            "name": "新天地",
+            "address": "上海市黄浦区太仓路181弄",
+            "location": {
+              "longitude": 121.4755,
+              "latitude": 31.2205
+            },
+            "visit_duration": 120,
+            "description": "由上海石库门旧区改造而成的时尚休闲地标，汇聚了国际画廊、精品店、露天咖啡馆和高端餐厅，是上海现代都市生活的缩影。",
+            "category": "时尚休闲区",
+            "rating": null,
+            "photos": [],
+            "poi_id": "",
+            "image_url": null,
+            "ticket_price": 0
+          },
+          {
+            "name": "上海城市规划展示馆",
+            "address": "上海市黄浦区人民大道100号",
+            "location": {
+              "longitude": 121.469,
+              "latitude": 31.233
+            },
+            "visit_duration": 90,
+            "description": "全面展示上海城市历史、现状与未来规划，拥有巨大的城市模型和多媒体互动展项，是了解上海都市发展的窗口。",
+            "category": "展览馆",
+            "rating": null,
+            "photos": [],
+            "poi_id": "",
+            "image_url": null,
+            "ticket_price": 30
+          },
+          {
+            "name": "外滩源",
+            "address": "上海市黄浦区圆明园路",
+            "location": {
+              "longitude": 121.4905,
+              "latitude": 31.2437
+            },
+            "visit_duration": 90,
+            "description": "外滩的源头，保留了大量建于20世纪初的历史建筑，如今融合了高端餐饮、艺术画廊和设计店铺，宁静而富有格调。",
+            "category": "历史建筑与现代融合",
+            "rating": null,
+            "photos": [],
+            "poi_id": "",
+            "image_url": null,
+            "ticket_price": 0
+          }
+        ],
+        "meals": [
+          {
+            "type": "breakfast",
+            "name": "酒店自助早餐",
+            "address": null,
+            "location": null,
+            "description": "酒店内享用自助早餐。",
+            "estimated_cost": 40
+          },
+          {
+            "type": "lunch",
+            "name": "新天地餐厅",
+            "address": null,
+            "location": null,
+            "description": "新天地内众多异国料理和本帮菜餐厅，推荐尝试露天座位。",
+            "estimated_cost": 100
+          },
+          {
+            "type": "dinner",
+            "name": "外滩源餐厅",
+            "address": null,
+            "location": null,
+            "description": "外滩源附近的高端餐厅，可一边欣赏历史建筑一边享用精致晚餐。",
+            "estimated_cost": 150
+          }
+        ]
+      }
+    ],
+    "weather_info": [
+      {
+        "date": "2026-10-02",
+        "day_weather": "多云",
+        "night_weather": "晴",
+        "day_temp": 26,
+        "night_temp": 19,
+        "wind_direction": "东北风",
+        "wind_power": "1-3级"
+      },
+      {
+        "date": "2026-10-03",
+        "day_weather": "晴",
+        "night_weather": "多云",
+        "day_temp": 27,
+        "night_temp": 20,
+        "wind_direction": "东风",
+        "wind_power": "1-3级"
+      },
+      {
+        "date": "2026-10-04",
+        "day_weather": "阴",
+        "night_weather": "小雨",
+        "day_temp": 25,
+        "night_temp": 18,
+        "wind_direction": "东南风",
+        "wind_power": "1-3级"
+      }
+    ],
+    "overall_suggestions": "10月初的上海秋高气爽，适合户外游览。建议购买地铁三日票或使用手机NFC交通卡，方便快捷。外滩和陆家嘴的夜景非常壮观，建议第一天和第二天晚上再次前往外滩或滨江大道欣赏灯光秀。由于天气可能阴雨，请随身携带雨具，并准备一件薄外套应对早晚温差。热门景点如东方明珠和上海中心大厦建议提前在线购票，避免排队。",
+    "budget": {
+      "total_attractions": 390,
+      "total_hotels": 2400,
+      "total_meals": 790,
+      "total_transportation": 90,
+      "total": 3670
+    }
+  },
+  "run": {
+    "ok": true,
+    "error": null,
+    "fallback_used": false,
+    "warnings": [],
+    "elapsed_ms": 42576,
+    "usage": {
+      "llm_calls": 8,
+      "prompt_tokens": 20163,
+      "completion_tokens": 7686,
+      "total_tokens": 27849,
+      "cost_cny": 0.038237,
+      "usage_source": "api",
+      "priced": true
+    }
+  }
+}

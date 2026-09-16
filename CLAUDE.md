@@ -52,6 +52,13 @@ cd backend && ./venv/Scripts/python.exe scripts/check_rag_env.py
 cd backend && ./venv/Scripts/python.exe scripts/recorder.py --dry-run   # 先看要发多少请求
 cd backend && ./venv/Scripts/python.exe scripts/recorder.py             # 真录
 
+# 逐名核对景点是否真实存在 —— poi_exists_rate 的 ground truth(⚠️ 调用高德,额度内免费)
+cd backend && ./venv/Scripts/python.exe scripts/check_poi_names.py --dry-run
+cd backend && ./venv/Scripts/python.exe scripts/check_poi_names.py      # 已查过的会跳过
+
+# 审计 poi_support_rate 里未命中的名字:是"库存不全"还是"真编造"?
+cd backend && ./venv/Scripts/python.exe scripts/audit_unmatched.py --tag baseline
+
 # 评测 —— 录制是**唯一花钱的一步**(10 条约 ¥1.2、20 分钟)
 cd backend && ./venv/Scripts/python.exe -m app.eval.run_eval --mode=record --tag=baseline --dry-run  # 先看要花多少,不花钱
 cd backend && ./venv/Scripts/python.exe -m app.eval.run_eval --mode=record --tag=baseline            # 真跑(无 --force 会拒绝覆盖)
@@ -141,6 +148,18 @@ temperature、编排模式)。没有它,翻出一份旧报告时你不知道它�
 
 ⚠️ `record` 会花真钱**并且覆盖已有数据**,所以不加 `--force` 时直接拒绝执行。
 
+**两个 oracle,测的不是一回事 —— 别只看一个**
+
+| 指标 | oracle | 实际测的是 |
+|---|---|---|
+| `poi_support_rate` | 我录的 POI 库存(20 个关键词的**样本**) | **库存覆盖率** |
+| `poi_exists_rate` | 拿名字去高德搜一次 | **名字是否真实存在** |
+
+baseline 里同一批名字:前者 **0.57**、后者 **0.98**。差值全部是库存覆盖率 ——
+库存装不下"有名但没被关键词命中"的地方(国子监、798、上海中心大厦)。
+**只看 `poi_support_rate` 会把库存不全读成模型在编**,然后去修一个不存在的 bug。
+`scripts/audit_unmatched.py` 专门做这个对比。
+
 ### 前端的三种数据来源
 
 `Result.vue` 同时服务三条路径,改它的时候要意识到这点:
@@ -196,23 +215,34 @@ temperature、编排模式)。没有它,翻出一份旧报告时你不知道它�
 
 已在 `app/__init__.py` 里把 stdio 强制成 UTF-8(放在这里是为了让所有入口都生效)。
 
-### 4. 项目当前会静默编造数据(P6 待修)
+### 4. 编造问题**没有在 baseline 里复现**(P6 的前提要重新看)
 
-`agents/trip_planner_agent.py` 的 `_create_fallback_plan()` 会生成"北京景点1"这种假数据,
-坐标用 `116.4 + i*0.01` 现算 —— **生成上海的计划会得到北京的坐标**,而且 `success=True`。
+`agents/trip_planner_agent.py` 的 `_create_fallback_plan()` **确实会**生成
+"北京景点1"这种假数据、坐标用 `116.4 + i*0.01` 现算,而且 `success=True` ——
+**这段代码还在**。但 P5 的 baseline 实测显示它**没被触发过**:
 
-根因不在 LLM:`maps_text_search` 这个高德 MCP 工具**只返回 id/name/address/typecode,
-没有坐标**;要 `maps_search_detail(id)` 才有 `location`。提示词却要求"经纬度坐标要真实准确",
-LLM 手上没数据只能编。`app/services/amap_service.py` 里 4 个 `TODO` 就是该补的解析。
+| 指标 | baseline 实测 | 说明 |
+|---|---|---|
+| `fallback_used` | **0 / 10** | 10 条请求一次都没走降级路径 |
+| `poi_exists_rate` | **0.9789** | 74 个景点名拿去高德搜,74 个都搜得到自己 |
+| `coord_mae_km` | **1.25 km**(8/9 通过) | 坐标是真的 |
+
+所以"生成上海的计划会得到北京坐标"在这 10 条里一次都没出现。
+
+**⚠️ 别把"没复现"读成"没问题"**:`_create_fallback_plan()` 仍然是颗雷 ——
+它只在 LLM 输出解析失败时才触发,而 baseline 那 10 条恰好都解析成功了。
+真正该修的是**那条路径本身**(宁可留空也不要编),不是"编造率"这个数字。
+
+`maps_text_search` 只返回 id/name/address/typecode 没有坐标,要 `maps_search_detail(id)`
+才有 `location` —— 这个事实仍然成立,`app/services/amap_service.py` 里 4 个 `TODO` 也还在。
 
 解析要用 `app/services/amap_parsing.py` 里那两个**被测过**的函数,不要重写:
 `unwrap_mcp_result()` 剥 MCP 文本外壳(用贪婪正则会在嵌套 JSON 上取过头)、
 `parse_location()` 拆 `"经度,纬度"` 字符串(顺序和常见的 "lat,lng" 相反)。
 
-P5 的 harness 怎么量化这个问题:两个互补的指标 ——
-`poi_support_rate` 抓"名字是编的",`coord_mae_km` 抓"名字对了但坐标是编的"。
-后者 `coord_coverage` 抓不到(假坐标只要落在城市范围内就放行),
-所以**不能只看 coord_coverage**。
+**P5 的 harness 量化这个问题的两条指标**(互补,都要看):
+`poi_exists_rate` 抓"名字是编的",`coord_mae_km` 抓"名字对了但坐标是编的"。
+后者 `coord_coverage` 抓不到(假坐标只要落在城市范围内就放行)。
 
 ### 5. `MCPTool.run()` 没有超时 —— 会永久卡死
 
@@ -250,7 +280,33 @@ P5 的 harness 怎么量化这个问题:两个互补的指标 ——
 已有数据驱动的回归测试兜底:`tests/test_geo.py::TestBboxAgainstRealData`
 拿录制库存反过来验(搜索时传了 `citylimit=true`,所以落在框外的必然是框画小了)。
 
-### 8. Python 3.14,不要碰 torch / sentence-transformers
+### 8. `maps_geo` **不是** POI 存在性 oracle,`maps_text_search` 才是
+
+测"景点名是不是编的"时,第一版用了 `maps_geo`(地理编码)—— 因为拿 `国子监`
+试了一下返回 `level=兴趣点`,以为能用。跑完 74 个名字才发现是错的:
+
+```
+外滩        → level=住宅区       南京路步行街 → level=道路
+豫园        → level=乡镇        东方明珠     → **返回空**(上海最著名的地标)
+```
+
+`maps_geo` 做的是**地址 → 坐标**的解析,它把输入当地址看。POI 名不是地址,
+所以地标名(东方明珠)解析不出来,而"外滩"这种区域名会被解析成行政区划。
+
+正确工具是 `maps_text_search`(**POI 关键词搜索**,就是建库存用的那个)。
+
+⚠️ **判据是「搜到的像不像」,不是「有没有搜到」。** 高德对编造的名字**不会返回空**,
+总会硬凑一堆相关 POI 给你:
+
+```
+搜「紫金幻梦星际主题乐园」→ 返回「泡泡玛特城市乐园」「咘隆家族主题乐园」
+搜「火星大饭店北京分店」  → 返回「南京大饭店」「北京饭店大堂」
+```
+
+光看"返回非空"会把编造的名字**全部放行**,而且看不出来。必须比名字相似度。
+见 `scripts/check_poi_names.py`,判定逻辑集中在 `metrics_grounding.checked_verdict()`。
+
+### 9. Python 3.14,不要碰 torch / sentence-transformers
 
 没有预编译 wheel,Windows 下装必失败。RAG 的 embedding 走硅基流动的 REST 接口
 (`BAAI/bge-m3`,1024 维)。这也是不引 ORM、用 stdlib `sqlite3` 的原因。
@@ -266,8 +322,8 @@ P5 的 harness 怎么量化这个问题:两个互补的指标 ——
 | P2 | 可观测性 + 回调式管线 + 修 health 端点 | ✅ |
 | P3 | token / 成本计量 | ✅ |
 | P4 | SQLite 持久化 + 三页面 + 分享链接 | ✅ |
-| **P5** | **评测 harness + baseline 报告** | 🔶 **代码完成**:5a 指标 ✅ / 单测 ✅ / 5b 接地性 ✅ / 5c CLI+报告 ✅ / **baseline.md 待跑**(要花 ¥1.2) |
-| P6 | 数据接地,修掉上面的编造问题 | ⬜ |
+| **P5** | **评测 harness + baseline 报告** | ✅ **完成**:`data/eval/baseline.md`,10 条行程,共花 ¥0.465 |
+| P6 | 数据接地:让降级路径**不再编造** + 给 LLM 真实坐标(`enrich_pois`) | ⬜ |
 | P7 | RAG 双层知识库(poi_facts + city_guides) | ⬜ |
 | P8 | 并发 + supervisor-worker 编排对比 | ⬜ |
 | P9 | 前端去杂乱 + 修 4 个 bug | ⬜ |

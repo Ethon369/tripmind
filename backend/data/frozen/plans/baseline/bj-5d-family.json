@@ -1,0 +1,505 @@
+{
+  "request_id": "bj-5d-family",
+  "provenance": {
+    "recorded_at": "2026-09-16T19:37:40",
+    "git_sha": "2cc443b",
+    "git_dirty": false,
+    "agent_mode": "pipeline",
+    "rag_enabled": false,
+    "model": "deepseek-flash",
+    "temperature": 0.0,
+    "metrics_version": "2026-09-16"
+  },
+  "request": {
+    "id": "bj-5d-family",
+    "city": "北京",
+    "start_date": "2026-10-01",
+    "end_date": "2026-10-05",
+    "travel_days": 5,
+    "transportation": "自驾",
+    "accommodation": "亲子酒店",
+    "preferences": [
+      "亲子",
+      "自然风光"
+    ],
+    "free_text_input": "行程尽量宽松,每天不要排太满"
+  },
+  "plan": {
+    "city": "北京",
+    "start_date": "2026-10-01",
+    "end_date": "2026-10-05",
+    "days": [
+      {
+        "date": "2026-10-01",
+        "day_index": 0,
+        "description": "第1天：抵达北京后直奔通州，全天畅玩北京环球影城主题公园，傍晚在环球城市大道散步用餐，节奏轻松不赶路。",
+        "transportation": "自驾（市区至通州环球度假区约30公里，车程约50分钟；度假区设有大型停车场，停车费约100元/天）",
+        "accommodation": "环球度假区主题亲子酒店",
+        "hotel": {
+          "name": "环球影城大酒店",
+          "address": "北京市通州区日出巷2号院",
+          "location": {
+            "longitude": 116.68,
+            "latitude": 39.857
+          },
+          "price_range": "1500-2000元",
+          "rating": "4.7",
+          "distance": "步行约5分钟直达北京环球影城入口",
+          "type": "主题乐园亲子度假酒店",
+          "estimated_cost": 1500
+        },
+        "attractions": [
+          {
+            "name": "北京环球影城主题公园",
+            "address": "北京市通州区梨园镇环球大道",
+            "location": {
+              "longitude": 116.6747,
+              "latitude": 39.8553
+            },
+            "visit_duration": 480,
+            "description": "亚洲最大的环球影城主题公园，拥有哈利·波特的魔法世界、小黄人乐园、变形金刚基地、功夫熊猫盖世之地等七大主题景区，项目丰富但可提前规划路线，带娃建议优先玩小黄人乐园和功夫熊猫区，全程不用赶场。",
+            "category": "主题乐园",
+            "rating": null,
+            "photos": [],
+            "poi_id": "",
+            "image_url": null,
+            "ticket_price": 638
+          },
+          {
+            "name": "环球城市大道",
+            "address": "北京市通州区环球大道1号（环球影城入口外）",
+            "location": {
+              "longitude": 116.679,
+              "latitude": 39.859
+            },
+            "visit_duration": 120,
+            "description": "免费开放的商业街区，紧邻环球影城入口，有环球影城商店、电影院和多国风味餐厅，夜晚灯光氛围好，适合出园后慢慢逛、吃晚餐。",
+            "category": "休闲商业街区",
+            "rating": null,
+            "photos": [],
+            "poi_id": "",
+            "image_url": null,
+            "ticket_price": 0
+          }
+        ],
+        "meals": [
+          {
+            "type": "breakfast",
+            "name": "酒店自助早餐",
+            "address": null,
+            "location": null,
+            "description": "环球影城大酒店自助早餐，中西式齐全，孩子有专属儿童餐区，吃饱再入园",
+            "estimated_cost": 60
+          },
+          {
+            "type": "lunch",
+            "name": "园区内小黄人主题餐厅",
+            "address": null,
+            "location": null,
+            "description": "午餐在园内解决，推荐三把扫帚酒吧或小黄人乐园餐厅，错峰用餐可节省排队时间",
+            "estimated_cost": 120
+          },
+          {
+            "type": "dinner",
+            "name": "环球城市大道餐厅",
+            "address": null,
+            "location": null,
+            "description": "出园后在城市大道选择中餐或意式餐厅，人均消费适中，餐后可散步消食",
+            "estimated_cost": 150
+          }
+        ]
+      },
+      {
+        "date": "2026-10-02",
+        "day_index": 1,
+        "description": "第2天：朝阳区文艺亲子日，上午打卡泡泡玛特城市乐园，下午到798艺术中心和郎园Station感受艺术氛围，行程集中在同一区域，车程短。",
+        "transportation": "自驾（泡泡玛特城市乐园至798艺术中心约8公里，约20分钟；798至郎园Station约4公里，约10分钟）",
+        "accommodation": "市区高端品牌亲子酒店",
+        "hotel": {
+          "name": "北京三里屯通盈中心洲际酒店",
+          "address": "北京市朝阳区南三里屯路1号",
+          "location": {
+            "longitude": 116.452,
+            "latitude": 39.9337
+          },
+          "price_range": "1500-2000元",
+          "rating": "4.8",
+          "distance": "距离泡泡玛特城市乐园约3公里",
+          "type": "市区五星级酒店",
+          "estimated_cost": 1600
+        },
+        "attractions": [
+          {
+            "name": "泡泡玛特城市乐园",
+            "address": "北京市朝阳区朝阳公园南路1号",
+            "location": {
+              "longitude": 116.475,
+              "latitude": 39.94
+            },
+            "visit_duration": 240,
+            "description": "潮玩IP主题乐园，MOLLY、LABUBU、DIMOO等形象遍布园内，有沉浸式互动展区、主题游乐设施和限定商店，色彩鲜艳拍照出片，低龄小朋友尤其喜欢。",
+            "category": "主题乐园",
+            "rating": null,
+            "photos": [],
+            "poi_id": "",
+            "image_url": null,
+            "ticket_price": 168
+          },
+          {
+            "name": "798艺术中心",
+            "address": "北京市朝阳区酒仙桥4号",
+            "location": {
+              "longitude": 116.4953,
+              "latitude": 39.9847
+            },
+            "visit_duration": 150,
+            "description": "由老厂房改造的当代艺术园区，画廊、雕塑、涂鸦墙随处可见，园区内有不少亲子手作工坊和咖啡馆，适合带孩子慢慢走、边玩边培养审美。",
+            "category": "文化艺术园区",
+            "rating": null,
+            "photos": [],
+            "poi_id": "",
+            "image_url": null,
+            "ticket_price": 0
+          },
+          {
+            "name": "首创·郎园Station",
+            "address": "北京市朝阳区东坝镇半截塔路53号",
+            "location": {
+              "longitude": 116.532,
+              "latitude": 39.969
+            },
+            "visit_duration": 120,
+            "description": "文创园区，保留了老仓库的红砖建筑，周末常有创意市集、儿童互动展览和草坪活动，空间开阔适合孩子跑跳，节奏松弛。",
+            "category": "文创休闲园区",
+            "rating": null,
+            "photos": [],
+            "poi_id": "",
+            "image_url": null,
+            "ticket_price": 0
+          }
+        ],
+        "meals": [
+          {
+            "type": "breakfast",
+            "name": "酒店自助早餐",
+            "address": null,
+            "location": null,
+            "description": "洲际酒店自助早餐，品类丰富，也可选择三里屯附近的老北京早点铺",
+            "estimated_cost": 60
+          },
+          {
+            "type": "lunch",
+            "name": "798园区内简餐",
+            "address": null,
+            "location": null,
+            "description": "园区内有多家西式简餐和咖啡厅，推荐意面、披萨等孩子易接受的餐食",
+            "estimated_cost": 100
+          },
+          {
+            "type": "dinner",
+            "name": "三里屯特色餐厅",
+            "address": null,
+            "location": null,
+            "description": "返回酒店附近用餐，可选京味菜或粤菜馆，三里屯餐饮选择非常丰富",
+            "estimated_cost": 150
+          }
+        ]
+      },
+      {
+        "date": "2026-10-03",
+        "day_index": 2,
+        "description": "第3天：上午游览世界文化遗产天坛公园祈年殿，下午到颐和园西侧的北坞公园享受田园风光，一天人文与自然各半，车程适中。",
+        "transportation": "自驾（天坛公园至北坞公园约20公里，车程约40分钟；北坞公园至酒店约7公里，约15分钟）",
+        "accommodation": "海淀区商务型亲子酒店",
+        "hotel": {
+          "name": "北京长峰假日酒店",
+          "address": "北京市海淀区永定路66号",
+          "location": {
+            "longitude": 116.2715,
+            "latitude": 39.9038
+          },
+          "price_range": "600-900元",
+          "rating": "4.5",
+          "distance": "距离北坞公园约7公里",
+          "type": "商务型酒店",
+          "estimated_cost": 700
+        },
+        "attractions": [
+          {
+            "name": "天坛公园-祈年殿",
+            "address": "北京市东城区天坛街道天坛东路甲1号",
+            "location": {
+              "longitude": 116.4066,
+              "latitude": 39.8822
+            },
+            "visit_duration": 180,
+            "description": "世界文化遗产，明清两代皇帝祭天祈谷之地。祈年殿三层蓝色琉璃瓦顶非常壮观，园区内古柏成林，孩子可以在开阔的丹陛桥上奔跑，边玩边了解古建筑与历史文化。",
+            "category": "历史文化古迹",
+            "rating": null,
+            "photos": [],
+            "poi_id": "",
+            "image_url": null,
+            "ticket_price": 34
+          },
+          {
+            "name": "北坞公园",
+            "address": "北京市海淀区颐和园西门外",
+            "location": {
+              "longitude": 116.256,
+              "latitude": 39.993
+            },
+            "visit_duration": 120,
+            "description": "紧邻颐和园西门的免费郊野公园，保留了大片稻田和菜地，秋季金黄一片，有木栈道、小桥流水，人少清静，非常适合亲子散步、放风筝和野餐。",
+            "category": "自然公园",
+            "rating": null,
+            "photos": [],
+            "poi_id": "",
+            "image_url": null,
+            "ticket_price": 0
+          }
+        ],
+        "meals": [
+          {
+            "type": "breakfast",
+            "name": "酒店早餐",
+            "address": null,
+            "location": null,
+            "description": "酒店内享用早餐，或到附近老字号品尝豆汁儿、焦圈等北京传统早点（孩子可选包子、粥）",
+            "estimated_cost": 60
+          },
+          {
+            "type": "lunch",
+            "name": "天坛北门附近京味餐厅",
+            "address": null,
+            "location": null,
+            "description": "推荐炸酱面、京酱肉丝、宫保鸡丁等家常京菜，孩子接受度高",
+            "estimated_cost": 100
+          },
+          {
+            "type": "dinner",
+            "name": "颐和园西门周边餐厅",
+            "address": null,
+            "location": null,
+            "description": "北坞公园游玩结束后就近用餐，可选农家菜馆，菜品清淡适合家庭",
+            "estimated_cost": 150
+          }
+        ]
+      },
+      {
+        "date": "2026-10-04",
+        "day_index": 3,
+        "description": "第4天：自驾前往房山十渡风景名胜区，一整天沉浸在山水中，可乘竹筏、玩漂流、走栈道，晚上入住房山度假酒店，节奏舒缓。",
+        "transportation": "自驾（海淀出发至房山十渡约85公里，车程约1小时40分钟；景区内各渡口之间需自驾摆渡）",
+        "accommodation": "房山山景度假亲子酒店",
+        "hotel": {
+          "name": "房山君澜度假酒店",
+          "address": "北京市房山区佛子庄乡黑龙观路2号院",
+          "location": {
+            "longitude": 115.83,
+            "latitude": 39.72
+          },
+          "price_range": "700-1000元",
+          "rating": "4.6",
+          "distance": "距离十渡景区约30公里",
+          "type": "山景度假酒店",
+          "estimated_cost": 800
+        },
+        "attractions": [
+          {
+            "name": "房山十渡风景名胜区",
+            "address": "北京市房山区九渡大街9号",
+            "location": {
+              "longitude": 115.593,
+              "latitude": 39.64
+            },
+            "visit_duration": 360,
+            "description": "被誉为“北方小桂林”，拒马河蜿蜒穿过峡谷，两岸峰林耸立。可乘竹筏漂流、走玻璃栈道、体验蹦极等户外项目，河水浅滩处适合孩子戏水玩耍，是秋季亲子山水游的首选。",
+            "category": "山水风景区",
+            "rating": null,
+            "photos": [],
+            "poi_id": "",
+            "image_url": null,
+            "ticket_price": 150
+          }
+        ],
+        "meals": [
+          {
+            "type": "breakfast",
+            "name": "酒店早餐",
+            "address": null,
+            "location": null,
+            "description": "早起用餐后出发，建议打包一些水果和面包作为路上加餐",
+            "estimated_cost": 60
+          },
+          {
+            "type": "lunch",
+            "name": "十渡景区农家院",
+            "address": null,
+            "location": null,
+            "description": "景区内农家院推荐柴鸡炖蘑菇、烤虹鳟鱼、山野菜，食材新鲜价格实惠",
+            "estimated_cost": 100
+          },
+          {
+            "type": "dinner",
+            "name": "度假酒店中餐厅",
+            "address": null,
+            "location": null,
+            "description": "返回酒店后用餐，可选清淡的粤菜或京菜，餐后在园区散步看夜景",
+            "estimated_cost": 150
+          }
+        ]
+      },
+      {
+        "date": "2026-10-05",
+        "day_index": 4,
+        "description": "第5天：返程日，上午到丰台南苑森林湿地公园观鸟散步，中午转往大兴念坛公园湖边骑行、放风筝，下午结束行程返回市区。",
+        "transportation": "自驾（房山至南苑森林湿地公园约60公里，约1小时10分钟；南苑至念坛公园约15公里，约25分钟）",
+        "accommodation": "市区性价比亲子酒店（如需多留一晚）",
+        "hotel": {
+          "name": "北京前门万达美华酒店",
+          "address": "北京市东城区前门街道珠市口东大街19号",
+          "location": {
+            "longitude": 116.402,
+            "latitude": 39.8935
+          },
+          "price_range": "500-700元",
+          "rating": "4.6",
+          "distance": "位于市中心，距南苑森林湿地公园约10公里，交通便利",
+          "type": "市区便捷型酒店",
+          "estimated_cost": 600
+        },
+        "attractions": [
+          {
+            "name": "南苑森林湿地公园",
+            "address": "北京市丰台区槐房路42号",
+            "location": {
+              "longitude": 116.362,
+              "latitude": 39.808
+            },
+            "visit_duration": 150,
+            "description": "城市南部的大型湿地生态公园，水系纵横、芦苇荡漾，是候鸟栖息地，设有观鸟屋和自然教育步道，适合带孩子观察鸟类与湿地生态，园区免费开放。",
+            "category": "湿地自然公园",
+            "rating": null,
+            "photos": [],
+            "poi_id": "",
+            "image_url": null,
+            "ticket_price": 0
+          },
+          {
+            "name": "念坛公园",
+            "address": "北京市大兴区新源大街21号",
+            "location": {
+              "longitude": 116.326,
+              "latitude": 39.728
+            },
+            "visit_duration": 150,
+            "description": "大兴区最大的城市公园，湖面开阔、绿道平整，可租亲子自行车环湖骑行，湖边草坪适合放风筝和野餐，园内还有儿童游乐区，是收尾放松的好去处。",
+            "category": "城市自然公园",
+            "rating": null,
+            "photos": [],
+            "poi_id": "",
+            "image_url": null,
+            "ticket_price": 0
+          }
+        ],
+        "meals": [
+          {
+            "type": "breakfast",
+            "name": "度假酒店早餐",
+            "address": null,
+            "location": null,
+            "description": "退房前在酒店用早餐，整理行李后出发",
+            "estimated_cost": 60
+          },
+          {
+            "type": "lunch",
+            "name": "南苑公园周边餐厅",
+            "address": null,
+            "location": null,
+            "description": "槐房路一带有多家家常菜馆，推荐饺子、炖菜等便于快速用餐的选择",
+            "estimated_cost": 120
+          },
+          {
+            "type": "dinner",
+            "name": "前门大街老字号",
+            "address": null,
+            "location": null,
+            "description": "行程结束返回市区，可在前门大街品尝全聚德烤鸭、都一处烧麦等老北京风味，为旅程收尾",
+            "estimated_cost": 150
+          }
+        ]
+      }
+    ],
+    "weather_info": [
+      {
+        "date": "2026-10-01",
+        "day_weather": "晴",
+        "night_weather": "多云",
+        "day_temp": 24,
+        "night_temp": 13,
+        "wind_direction": "南风",
+        "wind_power": "1-3级"
+      },
+      {
+        "date": "2026-10-02",
+        "day_weather": "多云",
+        "night_weather": "多云",
+        "day_temp": 23,
+        "night_temp": 12,
+        "wind_direction": "南风",
+        "wind_power": "1-3级"
+      },
+      {
+        "date": "2026-10-03",
+        "day_weather": "晴",
+        "night_weather": "晴",
+        "day_temp": 22,
+        "night_temp": 11,
+        "wind_direction": "北风",
+        "wind_power": "1-3级"
+      },
+      {
+        "date": "2026-10-04",
+        "day_weather": "多云",
+        "night_weather": "多云",
+        "day_temp": 21,
+        "night_temp": 11,
+        "wind_direction": "北风",
+        "wind_power": "1-3级"
+      },
+      {
+        "date": "2026-10-05",
+        "day_weather": "晴",
+        "night_weather": "多云",
+        "day_temp": 22,
+        "night_temp": 12,
+        "wind_direction": "南风",
+        "wind_power": "1-3级"
+      }
+    ],
+    "overall_suggestions": "【行程节奏】全程自驾、每日2-3个景点，上午出发、午后不赶场，预留充足的午休和自由活动时间，非常适合带娃家庭。【天气与穿衣】10月初北京秋高气爽，白天21-24℃、夜间11-13℃，昼夜温差约10-12℃，建议给孩子准备薄外套+长裤，早晚加衣；空气干燥，随身带保温杯、润唇膏和保湿霜，注意补水。【交通提示】国庆假期为出行高峰，外地车牌需办理进京证并遵守尾号限行，早晚高峰尽量避开；环球影城、十渡等热门景区建议提前1天在线购票、错峰入园（开园前30分钟到达）。【亲子贴士】随身备好湿巾、免洗洗手液、小零食和儿童常用药；环球影城可提前下载官方App查看排队时长；十渡漂流请给孩子穿好救生衣。【预约提醒】天坛公园、环球影城建议提前在官方渠道实名预约购票，节假日门票紧张。【餐饮建议】园区和景区内餐饮价格偏高，可自带适量零食和水；老北京小吃偏咸，可给孩子单点清淡菜品。",
+    "budget": {
+      "total_attractions": 990,
+      "total_hotels": 5200,
+      "total_meals": 1590,
+      "total_transportation": 1000,
+      "total": 8780
+    }
+  },
+  "run": {
+    "ok": true,
+    "error": null,
+    "fallback_used": false,
+    "warnings": [],
+    "elapsed_ms": 72522,
+    "usage": {
+      "llm_calls": 7,
+      "prompt_tokens": 16829,
+      "completion_tokens": 15692,
+      "total_tokens": 32521,
+      "cost_cny": 0.068307,
+      "usage_source": "api",
+      "priced": true
+    }
+  }
+}

@@ -1,0 +1,374 @@
+{
+  "request_id": "xa-3d-history",
+  "provenance": {
+    "recorded_at": "2026-09-16T19:37:40",
+    "git_sha": "2cc443b",
+    "git_dirty": false,
+    "agent_mode": "pipeline",
+    "rag_enabled": false,
+    "model": "deepseek-flash",
+    "temperature": 0.0,
+    "metrics_version": "2026-09-16"
+  },
+  "request": {
+    "id": "xa-3d-history",
+    "city": "西安",
+    "start_date": "2026-10-04",
+    "end_date": "2026-10-06",
+    "travel_days": 3,
+    "transportation": "公共交通",
+    "accommodation": "经济型酒店",
+    "preferences": [
+      "历史文化"
+    ],
+    "free_text_input": ""
+  },
+  "plan": {
+    "city": "西安",
+    "start_date": "2026-10-04",
+    "end_date": "2026-10-06",
+    "days": [
+      {
+        "date": "2026-10-04",
+        "day_index": 0,
+        "description": "第1天：古城中心历史人文初体验——钟楼、鼓楼、回坊市井文化，感受明城墙内的古都格局。景点集中在钟鼓楼广场周边，全程步行即可，节奏轻松。",
+        "transportation": "公共交通（地铁2号线钟楼站C口出站）+ 步行",
+        "accommodation": "经济型酒店",
+        "hotel": {
+          "name": "德玛西亚酒店（大雁塔小寨地铁站店）",
+          "address": "西安市雁塔区西旅国际西区电梯20楼（小寨地铁站D口往北470米）",
+          "location": {
+            "longitude": 108.9456,
+            "latitude": 34.2251
+          },
+          "price_range": "180-260元",
+          "rating": "4.4",
+          "distance": "距离陕西历史博物馆约1.2公里，距大雁塔约2.5公里，楼下即小寨地铁站",
+          "type": "经济型酒店",
+          "estimated_cost": 200
+        },
+        "attractions": [
+          {
+            "name": "西安钟楼",
+            "address": "西安市碑林区东、西、南、北四条大街交汇处（地铁2号线钟楼站C出口正对面）",
+            "location": {
+              "longitude": 108.9423,
+              "latitude": 34.261
+            },
+            "visit_duration": 60,
+            "description": "建于明洪武十七年（1384年），是中国现存规模最大、保存最完整的明代钟楼之一，也是西安的城市标志。楼体为砖木结构，重檐三滴水四角攒尖顶，登楼可俯瞰四条大街交汇的古城中轴线，楼内陈列明清古钟及钟文化展品。",
+            "category": "历史古迹",
+            "rating": null,
+            "photos": [],
+            "poi_id": "",
+            "image_url": null,
+            "ticket_price": 30
+          },
+          {
+            "name": "西安鼓楼",
+            "address": "西安市莲湖区北院门74号（广济街地铁站D1口步行370米）",
+            "location": {
+              "longitude": 108.9402,
+              "latitude": 34.2625
+            },
+            "visit_duration": 60,
+            "description": "始建于明洪武十三年（1380年），与钟楼遥相呼应，是中国现存最大的鼓楼。楼内陈列二十四节气鼓及明清鼓乐文物，鼓楼北侧即著名的北院门回坊风情街，傍晚灯火通明，市井氛围浓厚。",
+            "category": "历史古迹",
+            "rating": null,
+            "photos": [],
+            "poi_id": "",
+            "image_url": null,
+            "ticket_price": 30
+          },
+          {
+            "name": "西安记忆历史文化展览馆",
+            "address": "西安市莲湖区西安鼓楼北门旁（广济街地铁站D1口步行400米）",
+            "location": {
+              "longitude": 108.9403,
+              "latitude": 34.2632
+            },
+            "visit_duration": 90,
+            "description": "紧邻鼓楼，以“西安记忆”为主题，通过老照片、老物件、场景复原与多媒体影像，系统展示西安从周秦汉唐到近现代的市井生活与城市变迁，是了解古都民俗文化的小而精展馆，适合与钟鼓楼联游。",
+            "category": "历史文化展览馆",
+            "rating": null,
+            "photos": [],
+            "poi_id": "",
+            "image_url": null,
+            "ticket_price": 0
+          }
+        ],
+        "meals": [
+          {
+            "type": "breakfast",
+            "name": "小寨周边早餐铺·西安肉丸胡辣汤+坨坨馍",
+            "address": null,
+            "location": null,
+            "description": "本地人经典早餐，牛肉丸胡辣汤配坨坨馍，暖胃顶饱，人均约20元。",
+            "estimated_cost": 20
+          },
+          {
+            "type": "lunch",
+            "name": "北院门回坊·老孙家羊肉泡馍",
+            "address": null,
+            "location": null,
+            "description": "在鼓楼旁的北院门风情街品尝正宗牛羊肉泡馍，自己掰馍更有仪式感，配糖蒜解腻。",
+            "estimated_cost": 55
+          },
+          {
+            "type": "dinner",
+            "name": "回坊夜市·烤肉+八宝粥+镜糕",
+            "address": null,
+            "location": null,
+            "description": "傍晚逛回坊，红柳烤肉、灌汤包子、金线油塔、镜糕轮番品尝，边逛边吃感受市井烟火气。",
+            "estimated_cost": 70
+          }
+        ]
+      },
+      {
+        "date": "2026-10-05",
+        "day_index": 1,
+        "description": "第2天：十三朝古都深度日——上午陕西历史博物馆看国宝，下午大雁塔及大雁塔文化休闲景区，晚上看大雁塔北广场音乐喷泉。景点相对集中，地铁+步行为主。",
+        "transportation": "公共交通（地铁2号线小寨站换乘3号线至大雁塔站）+ 步行",
+        "accommodation": "经济型酒店",
+        "hotel": {
+          "name": "德玛西亚酒店（大雁塔小寨地铁站店）",
+          "address": "西安市雁塔区西旅国际西区电梯20楼（小寨地铁站D口往北470米）",
+          "location": {
+            "longitude": 108.9456,
+            "latitude": 34.2251
+          },
+          "price_range": "180-260元",
+          "rating": "4.4",
+          "distance": "距离陕西历史博物馆约1.2公里，距大雁塔约2.5公里",
+          "type": "经济型酒店",
+          "estimated_cost": 200
+        },
+        "attractions": [
+          {
+            "name": "陕西历史博物馆",
+            "address": "西安市雁塔区小寨东路91号",
+            "location": {
+              "longitude": 108.947,
+              "latitude": 34.2225
+            },
+            "visit_duration": 180,
+            "description": "中国第一座大型现代化国家级博物馆，被誉为“古都明珠、华夏宝库”。馆藏文物170余万件，周秦青铜、汉唐金银器、唐墓壁画与唐三彩尤为精彩，是系统了解十三朝古都历史的最佳去处。基本陈列免费但需提前预约，珍宝馆另收费。",
+            "category": "博物馆",
+            "rating": null,
+            "photos": [],
+            "poi_id": "",
+            "image_url": null,
+            "ticket_price": 30
+          },
+          {
+            "name": "大雁塔文化休闲景区-鼓楼（大慈恩寺）",
+            "address": "西安市雁塔区慈恩路大慈恩寺内（南侧）",
+            "location": {
+              "longitude": 108.9644,
+              "latitude": 34.218
+            },
+            "visit_duration": 120,
+            "description": "大慈恩寺是唐长安城内最著名的皇家寺院，玄奘法师曾在此译经。寺内大雁塔为唐永徽三年所建，是现存最早、规模最大的唐代四方楼阁式砖塔，为世界文化遗产。寺内钟鼓楼与塔身相映，可登塔远眺古城。",
+            "category": "历史古迹",
+            "rating": null,
+            "photos": [],
+            "poi_id": "",
+            "image_url": null,
+            "ticket_price": 40
+          },
+          {
+            "name": "西安记忆-长安十三朝历史文化展览馆",
+            "address": "西安市碑林区和平门外雁塔路123号大雁塔文化休闲景区（西北角）",
+            "location": {
+              "longitude": 108.9601,
+              "latitude": 34.2205
+            },
+            "visit_duration": 90,
+            "description": "以“长安十三朝”为主线，用微缩场景、沉浸式光影与文物复制品还原周、秦、汉、隋、唐等十三个王朝在长安建都的历史脉络，是紧邻大雁塔的补充型文化展馆，适合傍晚参观后步行至北广场看喷泉。",
+            "category": "历史文化展览馆",
+            "rating": null,
+            "photos": [],
+            "poi_id": "",
+            "image_url": null,
+            "ticket_price": 0
+          }
+        ],
+        "meals": [
+          {
+            "type": "breakfast",
+            "name": "小寨周边·水盆羊肉+白吉馍",
+            "address": null,
+            "location": null,
+            "description": "清汤羊肉配月牙饼，汤鲜肉烂，秋日清晨暖身首选，人均约20元。",
+            "estimated_cost": 20
+          },
+          {
+            "type": "lunch",
+            "name": "小寨商圈·biangbiang面+冰峰汽水",
+            "address": null,
+            "location": null,
+            "description": "宽如裤带的油泼面，配一瓶西安本地冰峰汽水，是最地道的关中味道。",
+            "estimated_cost": 45
+          },
+          {
+            "type": "dinner",
+            "name": "大雁塔北广场·秦豫肉夹馍+凉皮+葫芦头",
+            "address": null,
+            "location": null,
+            "description": "逛完大雁塔后在大雁塔北广场周边用餐，肉夹馍配秦镇米皮，再来一碗葫芦头泡馍收尾。",
+            "estimated_cost": 70
+          }
+        ]
+      },
+      {
+        "date": "2026-10-06",
+        "day_index": 2,
+        "description": "第3天：城南人文收尾日——上午小雁塔历史文化片区（含西安博物院），午后曲江池遗址公园赏唐风园林，傍晚返程。景点间距约6公里，地铁+公交接驳。",
+        "transportation": "公共交通（地铁2号线南稍门站→小雁塔，公交/地铁至曲江池，返程乘地铁至火车站）",
+        "accommodation": "经济型酒店",
+        "hotel": {
+          "name": "西安华庭宾馆（西安火车站店）",
+          "address": "西安市新城区建设巷5号（火车站东六路与东七路之间）",
+          "location": {
+            "longitude": 108.9564,
+            "latitude": 34.2778
+          },
+          "price_range": "150-220元",
+          "rating": "4.2",
+          "distance": "距西安火车站约300米，距小雁塔约5公里，出行返程便利",
+          "type": "经济型酒店",
+          "estimated_cost": 180
+        },
+        "attractions": [
+          {
+            "name": "小雁塔历史文化片区（西安博物院）",
+            "address": "西安市碑林区友谊西路72号（体育场北路与朱雀大街北段辅路交叉口东北20米）",
+            "location": {
+              "longitude": 108.9385,
+              "latitude": 34.2405
+            },
+            "visit_duration": 150,
+            "description": "小雁塔建于唐景龙年间，是唐荐福寺的佛塔，塔身历经多次地震“裂而不倒”，为世界文化遗产。塔旁即西安博物院，馆藏唐代长安城模型、佛教造像与历代文物，环境清幽、游人较少，是安静品味唐长安的好去处。",
+            "category": "历史古迹/博物馆",
+            "rating": null,
+            "photos": [],
+            "poi_id": "",
+            "image_url": null,
+            "ticket_price": 0
+          },
+          {
+            "name": "曲江池遗址公园",
+            "address": "西安市雁塔区曲江池西路与曲江池北路交叉口东南角",
+            "location": {
+              "longitude": 108.9855,
+              "latitude": 34.2018
+            },
+            "visit_duration": 150,
+            "description": "在原唐代曲江池遗址上复建的开放式唐文化园林，是盛唐“曲江流饮”“雁塔题名”的发生地。园区水面开阔，唐风亭台、石雕、诗碑沿湖分布，秋季天气晴好时可环湖漫步或骑行，日落时分景色尤佳。",
+            "category": "遗址公园",
+            "rating": null,
+            "photos": [],
+            "poi_id": "",
+            "image_url": null,
+            "ticket_price": 0
+          },
+          {
+            "name": "西安小寨历史博物馆",
+            "address": "西安市雁塔区育才路与翠华路交叉口东40米",
+            "location": {
+              "longitude": 108.9452,
+              "latitude": 34.2278
+            },
+            "visit_duration": 60,
+            "description": "位于小寨片区的小型历史陈列馆，通过地方文献、老照片与出土小件文物讲述小寨一带从唐代里坊到近现代街区的变迁，规模不大，可作为返程前顺路补充参观，参观约1小时。",
+            "category": "历史博物馆",
+            "rating": null,
+            "photos": [],
+            "poi_id": "",
+            "image_url": null,
+            "ticket_price": 0
+          }
+        ],
+        "meals": [
+          {
+            "type": "breakfast",
+            "name": "小雁塔周边·油条豆浆+粉汤羊血",
+            "address": null,
+            "location": null,
+            "description": "西安人早餐常见搭配，粉汤羊血酸辣开胃，配油条豆浆，人均约18元。",
+            "estimated_cost": 18
+          },
+          {
+            "type": "lunch",
+            "name": "曲江池周边·关中蒸碗+时蔬",
+            "address": null,
+            "location": null,
+            "description": "品尝粉蒸肉、梅菜扣肉等关中蒸碗，配一份时令凉拌菜，主食配荞面饸饹。",
+            "estimated_cost": 50
+          },
+          {
+            "type": "dinner",
+            "name": "火车站周边·德发长饺子宴（简版）",
+            "address": null,
+            "location": null,
+            "description": "返程前在火车站附近品尝西安特色饺子，数种馅料一笼一色，方便赶车。",
+            "estimated_cost": 65
+          }
+        ]
+      }
+    ],
+    "weather_info": [
+      {
+        "date": "2026-10-04",
+        "day_weather": "晴",
+        "night_weather": "多云",
+        "day_temp": 23,
+        "night_temp": 12,
+        "wind_direction": "南风",
+        "wind_power": "1-3级"
+      },
+      {
+        "date": "2026-10-05",
+        "day_weather": "多云",
+        "night_weather": "晴",
+        "day_temp": 24,
+        "night_temp": 13,
+        "wind_direction": "西南风",
+        "wind_power": "1-3级"
+      },
+      {
+        "date": "2026-10-06",
+        "day_weather": "晴",
+        "night_weather": "晴",
+        "day_temp": 22,
+        "night_temp": 11,
+        "wind_direction": "南风",
+        "wind_power": "1-3级"
+      }
+    ],
+    "overall_suggestions": "1. 天气与穿衣：10月上旬西安秋高气爽，白天22-24℃、夜间仅11-13℃，昼夜温差超10℃，建议“洋葱式”穿衣——薄长袖+薄外套/针织衫，早晚加一件风衣或夹克；紫外线仍较强，建议带帽子、墨镜和防晒霜。\n2. 预约提醒：陕西历史博物馆基本陈列免费但需提前1-7天在官方公众号实名预约，节假日（国庆假期）名额紧张，建议提前约好再到场，页内按珍宝馆30元计入预算。\n3. 交通建议：西安地铁覆盖钟楼、小寨、大雁塔、南稍门等主要景点，单程2-6元，建议用“西安地铁”APP或支付宝乘车码；3天公共交通支出约60-80元。钟鼓楼、回坊之间全程步行即可。\n4. 住宿建议：前两天住小寨地铁站旁的德玛西亚酒店，去陕历博、大雁塔步行/两站地铁即达；最后一晚换到西安火车站旁的华庭宾馆，便于返程。\n5. 美食推荐：牛羊肉泡馍、肉夹馍、biangbiang面、胡辣汤、粉汤羊血、凉皮、葫芦头泡馍、镜糕、甑糕，回坊（北院门）和永兴坊是最集中的觅食地。\n6. 时间安排：大雁塔北广场音乐喷泉通常为定时场次（节假日场次较多），建议提前查当日时间，傍晚前往；国庆期间热门景点人流量大，建议早上8:30-9:00前入馆/入园。\n7. 其他：随身携带身份证（景点、地铁安检、酒店登记均需），准备少量现金以备小店使用；曲江池遗址公园面积大，建议穿舒适运动鞋。",
+    "budget": {
+      "total_attractions": 100,
+      "total_hotels": 580,
+      "total_meals": 413,
+      "total_transportation": 80,
+      "total": 1173
+    }
+  },
+  "run": {
+    "ok": true,
+    "error": null,
+    "fallback_used": false,
+    "warnings": [],
+    "elapsed_ms": 37742,
+    "usage": {
+      "llm_calls": 7,
+      "prompt_tokens": 16998,
+      "completion_tokens": 7149,
+      "total_tokens": 24147,
+      "cost_cny": 0.03468,
+      "usage_source": "api",
+      "priced": true
+    }
+  }
+}

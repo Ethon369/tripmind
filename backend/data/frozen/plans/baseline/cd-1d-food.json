@@ -1,0 +1,164 @@
+{
+  "request_id": "cd-1d-food",
+  "provenance": {
+    "recorded_at": "2026-09-16T19:37:40",
+    "git_sha": "2cc443b",
+    "git_dirty": false,
+    "agent_mode": "pipeline",
+    "rag_enabled": false,
+    "model": "deepseek-flash",
+    "temperature": 0.0,
+    "metrics_version": "2026-09-16"
+  },
+  "request": {
+    "id": "cd-1d-food",
+    "city": "成都",
+    "start_date": "2026-10-03",
+    "end_date": "2026-10-03",
+    "travel_days": 1,
+    "transportation": "公共交通",
+    "accommodation": "经济型酒店",
+    "preferences": [
+      "美食"
+    ],
+    "free_text_input": ""
+  },
+  "plan": {
+    "city": "成都",
+    "start_date": "2026-10-03",
+    "end_date": "2026-10-03",
+    "days": [
+      {
+        "date": "2026-10-03",
+        "day_index": 0,
+        "description": "第1天：天府大道美食寻味一日游。上午从酒店出发，乘地铁前往新世纪环球中心，先在B1层美食广场解决早餐，随后逛环球中心（打卡室内海洋乐园外观与巨型穹顶），中午在A馆4楼品尝千层肚火锅；下午步行/骑行至招商大魔方，逛川菜与异国料理云集的美食楼层，喝一杯下午茶；傍晚转场成都SKP，逛高端市集与美食楼层；晚上在悦百味·品质川菜(大魔方店)享用正宗川菜晚餐后返回酒店。全天以地铁+步行为主，雨天请备好雨具。",
+        "transportation": "公共交通（地铁10号线→7号线→1号线，锦城广场站下；景点之间步行或共享单车）",
+        "accommodation": "经济型酒店",
+        "hotel": {
+          "name": "静致酒店",
+          "address": "成都市双流区韩国城一期7栋1单元（珠江路地铁站D口步行490米）",
+          "location": {
+            "longitude": 103.9165,
+            "latitude": 30.566
+          },
+          "price_range": "150-250元",
+          "rating": "4.2",
+          "distance": "距离天府大道环球中心商圈约20公里，地铁约50分钟",
+          "type": "经济型酒店",
+          "estimated_cost": 200
+        },
+        "attractions": [
+          {
+            "name": "新世纪环球中心",
+            "address": "成都市高新区天府大道北段1700号",
+            "location": {
+              "longitude": 104.0648,
+              "latitude": 30.5742
+            },
+            "visit_duration": 180,
+            "description": "亚洲最大的单体建筑之一，集购物中心、天堂岛海洋乐园、影城与美食广场于一体。B1层与4楼美食密度极高，聚集月满大江千层肚火锅、烤匠麻辣烤鱼、超级姜胖胖韩式自助烤肉、蛮涮自助小火锅、上井精致料理等，是成都南门一站式觅食地。雨天室内逛街不受影响。",
+            "category": "城市综合体/美食商圈",
+            "rating": null,
+            "photos": [],
+            "poi_id": "",
+            "image_url": null,
+            "ticket_price": 0
+          },
+          {
+            "name": "招商大魔方",
+            "address": "成都市高新区天府大道北段1777号",
+            "location": {
+              "longitude": 104.0703,
+              "latitude": 30.5793
+            },
+            "visit_duration": 120,
+            "description": "紧邻环球中心的潮流商业体，云集悦百味·品质川菜、许家菜樽宴、额尔敦传统涮、皮马聊亚洲热炒店等热门餐厅，4-6层为集中餐饮区，装修时尚、适合拍照打卡。与环球中心步行约10分钟可达，可以连逛。",
+            "category": "购物中心/美食街区",
+            "rating": null,
+            "photos": [],
+            "poi_id": "",
+            "image_url": null,
+            "ticket_price": 0
+          },
+          {
+            "name": "成都SKP",
+            "address": "成都市高新区天府大道北段2001号",
+            "location": {
+              "longitude": 104.0697,
+              "latitude": 30.5825
+            },
+            "visit_duration": 90,
+            "description": "西南地区高端商业地标，地面为下沉式公园景观，地下为高端百货与美食层，大董(成都SKP店)等知名餐厅坐落于此。傍晚灯光亮起时夜景极佳，适合餐后散步消食、购买伴手礼（川味零食、茶点）。",
+            "category": "高端商业/城市景观",
+            "rating": null,
+            "photos": [],
+            "poi_id": "",
+            "image_url": null,
+            "ticket_price": 0
+          }
+        ],
+        "meals": [
+          {
+            "type": "breakfast",
+            "name": "环球中心B1层美食广场（成都小吃档口）",
+            "address": null,
+            "location": null,
+            "description": "抵达环球中心后先吃早餐，推荐红油抄手、担担面或肥肠粉配锅盔，人均20-30元，暖胃又地道，为一天的觅食之旅开局。",
+            "estimated_cost": 30
+          },
+          {
+            "type": "lunch",
+            "name": "月满大江千层肚火锅(环球中心A馆店)",
+            "address": null,
+            "location": null,
+            "description": "位于环球中心E5区4楼，主打千层肚与鲜切毛肚的成都老火锅，锅底麻辣鲜香，建议11:30前到店取号避开排队高峰。人均约100-130元。",
+            "estimated_cost": 120
+          },
+          {
+            "type": "dinner",
+            "name": "悦百味·品质川菜(大魔方店)",
+            "address": null,
+            "location": null,
+            "description": "位于大魔方招商花园城B馆5楼，主打精致新派川菜，推荐口水鸡、麻婆豆腐、水煮鱼与甜皮鸭，环境舒适适合晚餐慢享。人均约120-160元。",
+            "estimated_cost": 150
+          }
+        ]
+      }
+    ],
+    "weather_info": [
+      {
+        "date": "2026-10-03",
+        "day_weather": "小雨",
+        "night_weather": "多云",
+        "day_temp": 23,
+        "night_temp": 18,
+        "wind_direction": "北风",
+        "wind_power": "1-3级"
+      }
+    ],
+    "overall_suggestions": "1) 天气：10月初成都多阴雨，白天有小雨，气温23℃/18℃左右，昼夜温差不大，建议穿薄外套或长袖，随身携带折叠伞和防滑鞋。2) 交通：以地铁为主，酒店出发乘10号线至太平园换7号线，再于火车南站换1号线至锦城广场站即达环球中心；三处景点（环球中心—大魔方—SKP）彼此步行约10分钟，雨天可走地下通道或天桥连廊。3) 美食提示：环球中心与大魔方是成都南门美食密度最高的两个商圈，热门火锅店（月满大江）和烤鱼店（烤匠）建议提前线上取号或错峰就餐；下午可在SKP或大魔方安排一杯盖碗茶/咖啡休息。4) 雨天备选：若雨势较大，可把环球中心天堂岛海洋乐园或商场内影城作为室内备选活动。5) 预算控制：全天三餐人均约300元即可吃得很好，川菜馆可多人拼菜更划算。",
+    "budget": {
+      "total_attractions": 0,
+      "total_hotels": 200,
+      "total_meals": 300,
+      "total_transportation": 50,
+      "total": 550
+    }
+  },
+  "run": {
+    "ok": true,
+    "error": null,
+    "fallback_used": false,
+    "warnings": [],
+    "elapsed_ms": 35547,
+    "usage": {
+      "llm_calls": 7,
+      "prompt_tokens": 17226,
+      "completion_tokens": 6081,
+      "total_tokens": 23307,
+      "cost_cny": 0.030636,
+      "usage_source": "api",
+      "priced": true
+    }
+  }
+}

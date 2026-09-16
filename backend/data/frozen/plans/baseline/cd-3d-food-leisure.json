@@ -1,0 +1,375 @@
+{
+  "request_id": "cd-3d-food-leisure",
+  "provenance": {
+    "recorded_at": "2026-09-16T19:37:40",
+    "git_sha": "2cc443b",
+    "git_dirty": false,
+    "agent_mode": "pipeline",
+    "rag_enabled": false,
+    "model": "deepseek-flash",
+    "temperature": 0.0,
+    "metrics_version": "2026-09-16"
+  },
+  "request": {
+    "id": "cd-3d-food-leisure",
+    "city": "成都",
+    "start_date": "2026-10-03",
+    "end_date": "2026-10-05",
+    "travel_days": 3,
+    "transportation": "公共交通",
+    "accommodation": "民宿",
+    "preferences": [
+      "美食",
+      "休闲"
+    ],
+    "free_text_input": ""
+  },
+  "plan": {
+    "city": "成都",
+    "start_date": "2026-10-03",
+    "end_date": "2026-10-05",
+    "days": [
+      {
+        "date": "2026-10-03",
+        "day_index": 0,
+        "description": "第1天：老成都人文慢游线——上午漫步宽窄巷子感受川西民居与市井烟火，午后到人民公园鹤鸣茶社点一杯盖碗茶体验成都式悠闲，傍晚转场太古里·春熙路，在时尚与烟火之间收尾第一天。全天以地铁+步行为主，节奏舒缓。",
+        "transportation": "公共交通（地铁4号线宽窄巷子站 → 步行约10分钟至人民公园 → 地铁2号线2站至春熙路）",
+        "accommodation": "特色民宿（青年旅舍）",
+        "hotel": {
+          "name": "POSHPACKER拖板鞋青年旅舍旅行民宿(太古里春熙路地铁站店)",
+          "address": "成都市锦江区东升街98号3楼",
+          "location": {
+            "longitude": 104.082,
+            "latitude": 30.6555
+          },
+          "price_range": "80-150元",
+          "rating": "4.6",
+          "distance": "距春熙路地铁站约350米，步行约5分钟即达太古里",
+          "type": "特色民宿/青年旅舍",
+          "estimated_cost": 120
+        },
+        "attractions": [
+          {
+            "name": "宽窄巷子",
+            "address": "成都市青羊区长顺上街（地铁4号线宽窄巷子站B口）",
+            "location": {
+              "longitude": 104.0592,
+              "latitude": 30.669
+            },
+            "visit_duration": 120,
+            "description": "由宽巷子、窄巷子、井巷子三条平行老街组成，保留了完整的清代川西民居院落。宽巷子多茶馆与老宅门头，窄巷子偏文艺小店与咖啡馆，井巷子是市井生活墙绘与小吃摊。建议早上前往，人相对少，光影也好，随手一拍都是老成都味道。",
+            "category": "历史街区",
+            "rating": null,
+            "photos": [],
+            "poi_id": "",
+            "image_url": null,
+            "ticket_price": 0
+          },
+          {
+            "name": "人民公园·鹤鸣茶社",
+            "address": "成都市青羊区少城路12号",
+            "location": {
+              "longitude": 104.0595,
+              "latitude": 30.662
+            },
+            "visit_duration": 90,
+            "description": "成都最市井的百年老茶馆，竹椅、方桌、盖碗茶一应俱全。点一杯茉莉花茶（约20-30元），可体验采耳师傅的手艺，看本地大爷下棋摆龙门阵，是体会“成都慢生活”的最佳场所。公园内还有保路运动纪念碑可顺路一观。",
+            "category": "城市公园/老茶馆",
+            "rating": null,
+            "photos": [],
+            "poi_id": "",
+            "image_url": null,
+            "ticket_price": 0
+          },
+          {
+            "name": "太古里·春熙路商圈",
+            "address": "成都市锦江区中纱帽街8号",
+            "location": {
+              "longitude": 104.0836,
+              "latitude": 30.6562
+            },
+            "visit_duration": 150,
+            "description": "川西青瓦坡屋顶与现代玻璃幕墙混搭的开放式街区，与大慈寺毗邻。白天适合逛街拍照、打卡IFS爬墙熊猫，傍晚灯光亮起氛围最佳。周边美食密集，从苍蝇馆子到精致餐厅都能找到。",
+            "category": "商业街区",
+            "rating": null,
+            "photos": [],
+            "poi_id": "",
+            "image_url": null,
+            "ticket_price": 0
+          }
+        ],
+        "meals": [
+          {
+            "type": "breakfast",
+            "name": "龙抄手（春熙路总店）",
+            "address": null,
+            "location": null,
+            "description": "成都老字号，红油抄手皮薄馅嫩，搭配一碗甜水面或担担面，开启地道成都味的一天。",
+            "estimated_cost": 30
+          },
+          {
+            "type": "lunch",
+            "name": "宽窄巷子周边川菜小馆（如成都映像/钟水饺）",
+            "address": null,
+            "location": null,
+            "description": "推荐钟水饺的红油水饺配甜水面，或点一份麻婆豆腐、回锅肉，人均50元左右即可吃得很满足。",
+            "estimated_cost": 50
+          },
+          {
+            "type": "dinner",
+            "name": "太古里周边川菜馆（马旺子川小馆/蜀大侠火锅）",
+            "address": null,
+            "location": null,
+            "description": "马旺子的藤椒钵钵鸡、毛血旺地道又不贵；想吃火锅可选蜀大侠，鸳鸯锅照顾不同口味，餐后可散步大慈寺。",
+            "estimated_cost": 90
+          }
+        ]
+      },
+      {
+        "date": "2026-10-04",
+        "day_index": 1,
+        "description": "第2天：熊猫与禅意的一天——务必早起，7:30前抵达大熊猫繁育研究基地抢占观猫黄金时段；下午到文殊院感受红墙禅意、品素斋；晚上到玉林西路小酒馆片区，用一顿串串和一杯小酒结束成都夜生活。",
+        "transportation": "公共交通（地铁3号线春熙路站 → 熊猫大道站，换乘景区专线公交；下午地铁3号线转1号线至文殊院站；晚间公交/打车至玉林片区）",
+        "accommodation": "特色民宿（青年旅舍）",
+        "hotel": {
+          "name": "POSHPACKER拖板鞋青年旅舍旅行民宿(太古里春熙路地铁站店)",
+          "address": "成都市锦江区东升街98号3楼",
+          "location": {
+            "longitude": 104.082,
+            "latitude": 30.6555
+          },
+          "price_range": "80-150元",
+          "rating": "4.6",
+          "distance": "紧邻地铁3号线春熙路站，可直达熊猫大道站，前往熊猫基地最便捷",
+          "type": "特色民宿/青年旅舍",
+          "estimated_cost": 120
+        },
+        "attractions": [
+          {
+            "name": "成都大熊猫繁育研究基地",
+            "address": "成都市成华区熊猫大道1375号",
+            "location": {
+              "longitude": 104.1469,
+              "latitude": 30.7335
+            },
+            "visit_duration": 240,
+            "description": "全球最大的大熊猫迁地保护基地，园内有月亮产房、太阳产房、幼年大熊猫别墅等区域。熊猫上午最活跃，建议7:30开园即入，先坐观光车到最里面的月亮产房，再一路往回逛。运气好能看到饲养员喂奶、幼崽爬树的名场面。",
+            "category": "主题动物园",
+            "rating": null,
+            "photos": [],
+            "poi_id": "",
+            "image_url": null,
+            "ticket_price": 55
+          },
+          {
+            "name": "文殊院",
+            "address": "成都市青羊区文殊院街66号",
+            "location": {
+              "longitude": 104.0712,
+              "latitude": 30.6793
+            },
+            "visit_duration": 90,
+            "description": "成都市区保存最完整的佛教寺院，红墙竹影、香火清幽，门票免费且可免费领取三支清香。院内素斋和旁边的文殊院宫廷糕点（桃酥、绿豆糕）都值得一尝，是喧嚣市区里难得的静心地。",
+            "category": "宗教古建",
+            "rating": null,
+            "photos": [],
+            "poi_id": "",
+            "image_url": null,
+            "ticket_price": 0
+          },
+          {
+            "name": "玉林西路·小酒馆街区",
+            "address": "成都市武侯区玉林西路",
+            "location": {
+              "longitude": 104.054,
+              "latitude": 30.637
+            },
+            "visit_duration": 90,
+            "description": "赵雷《成都》歌里的小酒馆所在地，也是成都最具烟火气的老社区。街道两侧串串店、火锅店、甜品店、小酒馆密集，晚上灯火通明，适合边吃边逛，感受成都人的日常生活节奏。",
+            "category": "市井街区/夜生活",
+            "rating": null,
+            "photos": [],
+            "poi_id": "",
+            "image_url": null,
+            "ticket_price": 0
+          }
+        ],
+        "meals": [
+          {
+            "type": "breakfast",
+            "name": "民宿周边成都小吃（蛋烘糕+豆浆油条）",
+            "address": null,
+            "location": null,
+            "description": "早起赶熊猫基地，就近解决最省时间。推荐蛋烘糕（可夹肉松、奶油）、军屯锅盔配一碗热豆浆。",
+            "estimated_cost": 25
+          },
+          {
+            "type": "lunch",
+            "name": "文殊院香园素斋 / 洞子口张老二凉粉",
+            "address": null,
+            "location": null,
+            "description": "香园的素斋自助与罗汉斋面口味清淡解腻；也可选老字号洞子口张老二凉粉，黄凉粉、甜水面、旋子凉粉都是招牌。",
+            "estimated_cost": 45
+          },
+          {
+            "type": "dinner",
+            "name": "玉林串串香 + 小酒馆小酌",
+            "address": null,
+            "location": null,
+            "description": "玉林串串香是成都串串的代表，牛肉、掌中宝、鸭肠必点，人均七八十元吃到饱；餐后到小酒馆点一杯精酿听民谣，感受成都的夜。",
+            "estimated_cost": 90
+          }
+        ]
+      },
+      {
+        "date": "2026-10-05",
+        "day_index": 2,
+        "description": "第3天：高新美食休闲日——上午在铁像寺水街体验川西水乡式的慢生活，下午逛新世纪环球中心（含室内海洋乐园），傍晚转战招商大魔方与成都SKP，把成都地道川菜、火锅、烤鱼一网打尽，为旅程收尾。",
+        "transportation": "公共交通（地铁1号线至锦城广场站/孵化园站，商圈之间可步行或共享单车接驳，全程约10-15分钟）",
+        "accommodation": "特色民宿（青年旅舍）",
+        "hotel": {
+          "name": "POSHPACKER拖板鞋青年旅舍旅行民宿(太古里春熙路地铁站店)",
+          "address": "成都市锦江区东升街98号3楼",
+          "location": {
+            "longitude": 104.082,
+            "latitude": 30.6555
+          },
+          "price_range": "80-150元",
+          "rating": "4.6",
+          "distance": "步行350米至春熙路地铁站，乘1号线可直达环球中心商圈",
+          "type": "特色民宿/青年旅舍",
+          "estimated_cost": 120
+        },
+        "attractions": [
+          {
+            "name": "铁像寺水街",
+            "address": "成都市高新区天府一街",
+            "location": {
+              "longitude": 104.0417,
+              "latitude": 30.5722
+            },
+            "visit_duration": 120,
+            "description": "依托明代铁像寺打造的川西水乡风情街区，小桥流水、青瓦白墙，沿河遍布茶馆、川菜馆和手作小店。上午人少安静，适合喝茶拍照、慢慢逛，是高新区里最“老成都”的一角。",
+            "category": "特色街区",
+            "rating": null,
+            "photos": [],
+            "poi_id": "",
+            "image_url": null,
+            "ticket_price": 0
+          },
+          {
+            "name": "新世纪环球中心",
+            "address": "成都市武侯区天府大道北段1700号",
+            "location": {
+              "longitude": 104.0628,
+              "latitude": 30.5725
+            },
+            "visit_duration": 150,
+            "description": "全球最大的单体建筑之一，外观如巨型蓝色波浪。内部汇聚购物中心、天堂岛海洋乐园、滑冰场、影院等业态，下雨天尤其适合室内游玩。四楼美食广场与各层餐厅选择极为丰富。",
+            "category": "购物中心/室内乐园",
+            "rating": null,
+            "photos": [],
+            "poi_id": "",
+            "image_url": null,
+            "ticket_price": 0
+          },
+          {
+            "name": "招商大魔方·成都SKP商圈",
+            "address": "成都市武侯区天府大道北段1777号",
+            "location": {
+              "longitude": 104.0663,
+              "latitude": 30.5772
+            },
+            "visit_duration": 150,
+            "description": "成都新晋的高端商业地标，招商大魔方与SKP以连廊相通，地面为下沉式生态公园景观，夜晚灯光与交子大道双子塔夜景相映。这里同时也是美食集中地，品质川菜、火锅、异国料理一应俱全。",
+            "category": "商业街区",
+            "rating": null,
+            "photos": [],
+            "poi_id": "",
+            "image_url": null,
+            "ticket_price": 0
+          }
+        ],
+        "meals": [
+          {
+            "type": "breakfast",
+            "name": "民宿周边早餐铺（红糖糍粑+豆浆）",
+            "address": null,
+            "location": null,
+            "description": "出发前在春熙路附近的小店吃一份现炸红糖糍粑或甜水面，搭配热豆奶，暖胃又顶饱。",
+            "estimated_cost": 30
+          },
+          {
+            "type": "lunch",
+            "name": "月满大江千层肚火锅（环球中心A馆店）",
+            "address": null,
+            "location": null,
+            "description": "环球中心E5区4楼。成都本土人气火锅，招牌千层肚、鲜毛肚、嫩牛肉份量足，锅底香辣不燥，适合午餐慢慢涮。",
+            "estimated_cost": 100
+          },
+          {
+            "type": "dinner",
+            "name": "烤匠麻辣烤鱼（环球中心店）",
+            "address": null,
+            "location": null,
+            "description": "天府大道北段1700号新世纪环球中心4层。成都烤鱼第一品牌，麻辣豆花烤鱼是招牌，外焦里嫩的鱼身配上豆花和土豆片，人均90元左右，收尾再点一份冰粉解辣。",
+            "estimated_cost": 90
+          }
+        ]
+      }
+    ],
+    "weather_info": [
+      {
+        "date": "2026-10-03",
+        "day_weather": "阵雨",
+        "night_weather": "多云",
+        "day_temp": 25,
+        "night_temp": 19,
+        "wind_direction": "北风",
+        "wind_power": "1-3级"
+      },
+      {
+        "date": "2026-10-04",
+        "day_weather": "多云",
+        "night_weather": "阵雨",
+        "day_temp": 24,
+        "night_temp": 19,
+        "wind_direction": "北风",
+        "wind_power": "1-3级"
+      },
+      {
+        "date": "2026-10-05",
+        "day_weather": "阵雨",
+        "night_weather": "阵雨",
+        "day_temp": 23,
+        "night_temp": 20,
+        "wind_direction": "北风",
+        "wind_power": "1-3级"
+      }
+    ],
+    "overall_suggestions": "1. 天气：三天以阵雨为主，气温23-25℃，昼夜温差不大，但湿度较高。务必随身携带折叠伞或雨衣，穿防滑运动鞋；室内景点（环球中心、太古里、SKP）可作为下雨时的备选。\n2. 交通：成都地铁覆盖核心景区，建议下载「天府通」APP或使用支付宝乘车码，3天交通费约100元足够。春熙路、宽窄巷子、文殊院、熊猫大道均可地铁直达，环球中心商圈从春熙路乘1号线约30分钟。\n3. 美食：成都口味偏麻辣，不能吃辣请提前说“微辣”或“不要辣椒”。推荐集中体验火锅、串串、烤鱼、川菜四大类，餐前可备一些肠胃药。环球中心与招商大魔方两处商圈美食密度最高，建议至少安排半天。\n4. 行程：熊猫基地务必早上7:30前入园，中午后熊猫多进入室内休息；宽窄巷子和人民公园建议上午前往，避开午后旅行团高峰。\n5. 预约：熊猫基地、部分热门餐厅需提前在官方小程序预约，国庆假期（10月3-5日）为客流高峰，建议提前1-2天预约门票与餐厅包间。\n6. 住宿：推荐住在春熙路太古里一带的特色民宿，地铁2、3号线交汇，去熊猫基地、宽窄巷子、高新区都方便，三天无需换酒店可减少搬运行李的麻烦。",
+    "budget": {
+      "total_attractions": 55,
+      "total_hotels": 360,
+      "total_meals": 550,
+      "total_transportation": 100,
+      "total": 1065
+    }
+  },
+  "run": {
+    "ok": true,
+    "error": null,
+    "fallback_used": false,
+    "warnings": [],
+    "elapsed_ms": 71381,
+    "usage": {
+      "llm_calls": 7,
+      "prompt_tokens": 17288,
+      "completion_tokens": 14739,
+      "total_tokens": 32027,
+      "cost_cny": 0.063825,
+      "usage_source": "api",
+      "priced": true
+    }
+  }
+}

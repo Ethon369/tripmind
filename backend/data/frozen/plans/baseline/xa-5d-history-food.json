@@ -1,0 +1,537 @@
+{
+  "request_id": "xa-5d-history-food",
+  "provenance": {
+    "recorded_at": "2026-09-16T19:37:40",
+    "git_sha": "2cc443b",
+    "git_dirty": false,
+    "agent_mode": "pipeline",
+    "rag_enabled": false,
+    "model": "deepseek-flash",
+    "temperature": 0.0,
+    "metrics_version": "2026-09-16"
+  },
+  "request": {
+    "id": "xa-5d-history-food",
+    "city": "西安",
+    "start_date": "2026-10-04",
+    "end_date": "2026-10-08",
+    "travel_days": 5,
+    "transportation": "公共交通",
+    "accommodation": "经济型酒店",
+    "preferences": [
+      "历史文化",
+      "美食"
+    ],
+    "free_text_input": ""
+  },
+  "plan": {
+    "city": "西安",
+    "start_date": "2026-10-04",
+    "end_date": "2026-10-08",
+    "days": [
+      {
+        "date": "2026-10-04",
+        "day_index": 0,
+        "description": "抵达西安，游览市中心钟楼、鼓楼，感受古城风貌，晚上品尝回民街美食。",
+        "transportation": "公共交通（地铁2号线）",
+        "accommodation": "经济型酒店",
+        "hotel": {
+          "name": "西安华庭宾馆（西安火车站店）",
+          "address": "建设巷5号（火车站东六路与东七路之间）",
+          "location": {
+            "longitude": 108.955,
+            "latitude": 34.275
+          },
+          "price_range": "200-300元",
+          "rating": "4.0",
+          "distance": "距离钟楼约3公里，地铁2号线2站",
+          "type": "经济型酒店",
+          "estimated_cost": 250
+        },
+        "attractions": [
+          {
+            "name": "西安钟楼",
+            "address": "西安地铁2号线钟楼站C出口正对面",
+            "location": {
+              "longitude": 108.9402,
+              "latitude": 34.261
+            },
+            "visit_duration": 60,
+            "description": "西安市中心地标，明代建筑，可俯瞰四条大街。",
+            "category": "古建",
+            "rating": null,
+            "photos": [],
+            "poi_id": "",
+            "image_url": null,
+            "ticket_price": 30
+          },
+          {
+            "name": "西安鼓楼",
+            "address": "北院门74号（广济街地铁站D1口步行370米）",
+            "location": {
+              "longitude": 108.9395,
+              "latitude": 34.2618
+            },
+            "visit_duration": 60,
+            "description": "与钟楼相望，鼓楼上有鼓乐表演，附近回民街美食众多。",
+            "category": "古建",
+            "rating": null,
+            "photos": [],
+            "poi_id": "",
+            "image_url": null,
+            "ticket_price": 30
+          },
+          {
+            "name": "西安记忆历史文化展览馆",
+            "address": "西安鼓楼北门旁（广济街地铁站D1口步行400米）",
+            "location": {
+              "longitude": 108.939,
+              "latitude": 34.262
+            },
+            "visit_duration": 60,
+            "description": "展示西安历史文化变迁，适合了解古城前世今生。",
+            "category": "博物馆",
+            "rating": null,
+            "photos": [],
+            "poi_id": "",
+            "image_url": null,
+            "ticket_price": 0
+          }
+        ],
+        "meals": [
+          {
+            "type": "breakfast",
+            "name": "酒店周边早餐",
+            "address": null,
+            "location": null,
+            "description": "胡辣汤、肉夹馍",
+            "estimated_cost": 20
+          },
+          {
+            "type": "lunch",
+            "name": "老孙家羊肉泡馍",
+            "address": null,
+            "location": null,
+            "description": "钟楼附近，品尝正宗羊肉泡馍",
+            "estimated_cost": 50
+          },
+          {
+            "type": "dinner",
+            "name": "回民街美食",
+            "address": null,
+            "location": null,
+            "description": "贾三灌汤包、烤肉、酸梅汤",
+            "estimated_cost": 80
+          }
+        ]
+      },
+      {
+        "date": "2026-10-05",
+        "day_index": 1,
+        "description": "参观陕西历史博物馆，游览小雁塔历史文化片区，感受盛唐气象。",
+        "transportation": "公共交通（地铁2号线转3号线）",
+        "accommodation": "经济型酒店",
+        "hotel": {
+          "name": "德玛西亚酒店（大雁塔小寨地铁站店）",
+          "address": "西旅国际西区电梯20楼（小寨地铁站D口往北步行470米）",
+          "location": {
+            "longitude": 108.948,
+            "latitude": 34.23
+          },
+          "price_range": "250-350元",
+          "rating": "4.2",
+          "distance": "距离陕西历史博物馆约1公里，小雁塔约2公里",
+          "type": "经济型酒店",
+          "estimated_cost": 300
+        },
+        "attractions": [
+          {
+            "name": "陕西历史博物馆",
+            "address": "小寨东路91号",
+            "location": {
+              "longitude": 108.9533,
+              "latitude": 34.2225
+            },
+            "visit_duration": 180,
+            "description": "被誉为“华夏宝库”，馆藏文物丰富，需提前预约。",
+            "category": "博物馆",
+            "rating": null,
+            "photos": [],
+            "poi_id": "",
+            "image_url": null,
+            "ticket_price": 0
+          },
+          {
+            "name": "小雁塔历史文化片区",
+            "address": "体育场北路与朱雀大街北段辅路交叉口东北20米",
+            "location": {
+              "longitude": 108.9425,
+              "latitude": 34.2405
+            },
+            "visit_duration": 120,
+            "description": "唐代佛教建筑遗存，环境清幽，可登塔远眺。",
+            "category": "古建/遗址",
+            "rating": null,
+            "photos": [],
+            "poi_id": "",
+            "image_url": null,
+            "ticket_price": 0
+          }
+        ],
+        "meals": [
+          {
+            "type": "breakfast",
+            "name": "酒店周边早餐",
+            "address": null,
+            "location": null,
+            "description": "包子、稀饭",
+            "estimated_cost": 15
+          },
+          {
+            "type": "lunch",
+            "name": "长安大牌档",
+            "address": null,
+            "location": null,
+            "description": "小寨赛格国际购物中心，葫芦鸡、毛笔酥",
+            "estimated_cost": 60
+          },
+          {
+            "type": "dinner",
+            "name": "子午路张记肉夹馍",
+            "address": null,
+            "location": null,
+            "description": "小寨附近，肉夹馍、凉皮",
+            "estimated_cost": 40
+          }
+        ]
+      },
+      {
+        "date": "2026-10-06",
+        "day_index": 2,
+        "description": "前往大雁塔文化休闲景区，参观西安记忆·长安十三朝，游览曲江池遗址公园和富陶博物馆。",
+        "transportation": "公共交通（地铁3号线转4号线）",
+        "accommodation": "经济型酒店",
+        "hotel": {
+          "name": "德玛西亚酒店（大雁塔小寨地铁站店）",
+          "address": "西旅国际西区电梯20楼（小寨地铁站D口往北步行470米）",
+          "location": {
+            "longitude": 108.948,
+            "latitude": 34.23
+          },
+          "price_range": "250-350元",
+          "rating": "4.2",
+          "distance": "距离大雁塔约2公里，曲江池约5公里",
+          "type": "经济型酒店",
+          "estimated_cost": 300
+        },
+        "attractions": [
+          {
+            "name": "西安记忆·长安十三朝历史文化展览馆",
+            "address": "和平门外雁塔路123号大雁塔文化休闲景区（西北角）",
+            "location": {
+              "longitude": 108.964,
+              "latitude": 34.2185
+            },
+            "visit_duration": 90,
+            "description": "通过展览了解长安十三朝古都历史，位于大雁塔旁。",
+            "category": "博物馆",
+            "rating": null,
+            "photos": [],
+            "poi_id": "",
+            "image_url": null,
+            "ticket_price": 60
+          },
+          {
+            "name": "曲江池遗址公园",
+            "address": "曲江池西路与曲江池北路交叉口东南角",
+            "location": {
+              "longitude": 108.978,
+              "latitude": 34.204
+            },
+            "visit_duration": 120,
+            "description": "唐代曲江池遗址，湖景优美，适合散步休闲。",
+            "category": "遗址公园",
+            "rating": null,
+            "photos": [],
+            "poi_id": "",
+            "image_url": null,
+            "ticket_price": 0
+          },
+          {
+            "name": "富陶博物馆·唐毓引",
+            "address": "唐代历史文化街区18号西曲馆23号",
+            "location": {
+              "longitude": 108.97,
+              "latitude": 34.21
+            },
+            "visit_duration": 90,
+            "description": "展示唐代陶瓷文化，可体验陶艺制作。",
+            "category": "博物馆",
+            "rating": null,
+            "photos": [],
+            "poi_id": "",
+            "image_url": null,
+            "ticket_price": 50
+          }
+        ],
+        "meals": [
+          {
+            "type": "breakfast",
+            "name": "酒店周边早餐",
+            "address": null,
+            "location": null,
+            "description": "豆腐脑、油条",
+            "estimated_cost": 15
+          },
+          {
+            "type": "lunch",
+            "name": "天下第一面",
+            "address": null,
+            "location": null,
+            "description": "大雁塔附近，biangbiang面",
+            "estimated_cost": 50
+          },
+          {
+            "type": "dinner",
+            "name": "大唐不夜城美食街",
+            "address": null,
+            "location": null,
+            "description": "曲江池附近，各类陕西小吃",
+            "estimated_cost": 70
+          }
+        ]
+      },
+      {
+        "date": "2026-10-07",
+        "day_index": 3,
+        "description": "前往周至县终南山古楼观历史文化景区，感受道教文化，返回市区后参观西安记忆历史文化展览馆。",
+        "transportation": "公共交通（地铁+公交/景区直通车）",
+        "accommodation": "经济型酒店",
+        "hotel": {
+          "name": "西安华庭宾馆（西安火车站店）",
+          "address": "建设巷5号（火车站东六路与东七路之间）",
+          "location": {
+            "longitude": 108.955,
+            "latitude": 34.275
+          },
+          "price_range": "200-300元",
+          "rating": "4.0",
+          "distance": "距离钟楼约3公里，方便返程",
+          "type": "经济型酒店",
+          "estimated_cost": 250
+        },
+        "attractions": [
+          {
+            "name": "终南山古楼观历史文化景区",
+            "address": "周至县楼观镇楼观台（近郊）",
+            "location": {
+              "longitude": 108.33,
+              "latitude": 34.06
+            },
+            "visit_duration": 300,
+            "description": "道教文化发祥地之一，有“天下第一福地”之称，古建筑群宏伟。",
+            "category": "文化景区",
+            "rating": null,
+            "photos": [],
+            "poi_id": "",
+            "image_url": null,
+            "ticket_price": 60
+          },
+          {
+            "name": "西安记忆历史文化展览馆",
+            "address": "西安鼓楼北门旁（广济街地铁站D1口步行400米）",
+            "location": {
+              "longitude": 108.939,
+              "latitude": 34.262
+            },
+            "visit_duration": 60,
+            "description": "返回市区后参观，了解西安城市记忆。",
+            "category": "博物馆",
+            "rating": null,
+            "photos": [],
+            "poi_id": "",
+            "image_url": null,
+            "ticket_price": 0
+          }
+        ],
+        "meals": [
+          {
+            "type": "breakfast",
+            "name": "酒店周边早餐",
+            "address": null,
+            "location": null,
+            "description": "肉丸胡辣汤",
+            "estimated_cost": 15
+          },
+          {
+            "type": "lunch",
+            "name": "楼观镇农家乐",
+            "address": null,
+            "location": null,
+            "description": "当地农家菜、浆水鱼鱼",
+            "estimated_cost": 70
+          },
+          {
+            "type": "dinner",
+            "name": "回民街美食",
+            "address": null,
+            "location": null,
+            "description": "红柳烤肉、酸汤水饺",
+            "estimated_cost": 60
+          }
+        ]
+      },
+      {
+        "date": "2026-10-08",
+        "day_index": 4,
+        "description": "前往高陵区参观中共高陵历史展览馆，返回市区游览孙庆海历史博物馆，结束旅程。",
+        "transportation": "公共交通（地铁+公交）",
+        "accommodation": "经济型酒店（返程日，无需住宿）",
+        "hotel": {
+          "name": "西安华庭宾馆（西安火车站店）",
+          "address": "建设巷5号（火车站东六路与东七路之间）",
+          "location": {
+            "longitude": 108.955,
+            "latitude": 34.275
+          },
+          "price_range": "200-300元",
+          "rating": "4.0",
+          "distance": "距离火车站近，方便返程",
+          "type": "经济型酒店",
+          "estimated_cost": 0
+        },
+        "attractions": [
+          {
+            "name": "中共高陵历史展览馆",
+            "address": "高陵区南环东路昭慧广场高陵博物馆",
+            "location": {
+              "longitude": 109.088,
+              "latitude": 34.535
+            },
+            "visit_duration": 120,
+            "description": "了解高陵地区革命历史和地方文化。",
+            "category": "博物馆",
+            "rating": null,
+            "photos": [],
+            "poi_id": "",
+            "image_url": null,
+            "ticket_price": 0
+          },
+          {
+            "name": "孙庆海历史博物馆",
+            "address": "大皮院与西华门大街交叉口西40米",
+            "location": {
+              "longitude": 108.943,
+              "latitude": 34.265
+            },
+            "visit_duration": 90,
+            "description": "民间收藏博物馆，展示历史文物，位于小吃街附近。",
+            "category": "博物馆",
+            "rating": null,
+            "photos": [],
+            "poi_id": "",
+            "image_url": null,
+            "ticket_price": 0
+          }
+        ],
+        "meals": [
+          {
+            "type": "breakfast",
+            "name": "酒店周边早餐",
+            "address": null,
+            "location": null,
+            "description": "包子、豆浆",
+            "estimated_cost": 15
+          },
+          {
+            "type": "lunch",
+            "name": "高陵区当地餐馆",
+            "address": null,
+            "location": null,
+            "description": "高陵特色面食、农家菜",
+            "estimated_cost": 50
+          },
+          {
+            "type": "dinner",
+            "name": "大皮院美食",
+            "address": null,
+            "location": null,
+            "description": "盛家凉皮、定家小酥肉",
+            "estimated_cost": 50
+          }
+        ]
+      }
+    ],
+    "weather_info": [
+      {
+        "date": "2026-10-04",
+        "day_weather": "晴",
+        "night_weather": "多云",
+        "day_temp": 24,
+        "night_temp": 13,
+        "wind_direction": "南风",
+        "wind_power": "1-3级"
+      },
+      {
+        "date": "2026-10-05",
+        "day_weather": "晴",
+        "night_weather": "晴",
+        "day_temp": 25,
+        "night_temp": 14,
+        "wind_direction": "西南风",
+        "wind_power": "1-3级"
+      },
+      {
+        "date": "2026-10-06",
+        "day_weather": "多云",
+        "night_weather": "晴",
+        "day_temp": 23,
+        "night_temp": 12,
+        "wind_direction": "南风",
+        "wind_power": "1-3级"
+      },
+      {
+        "date": "2026-10-07",
+        "day_weather": "晴",
+        "night_weather": "多云",
+        "day_temp": 22,
+        "night_temp": 11,
+        "wind_direction": "东北风",
+        "wind_power": "1-3级"
+      },
+      {
+        "date": "2026-10-08",
+        "day_weather": "多云",
+        "night_weather": "晴",
+        "day_temp": 21,
+        "night_temp": 10,
+        "wind_direction": "东风",
+        "wind_power": "1-3级"
+      }
+    ],
+    "overall_suggestions": "西安秋季昼夜温差较大，建议携带薄外套，早晚注意保暖。陕西历史博物馆需提前预约，建议提前3-5天在官方渠道预约。市区景点地铁可达，前往终南山古楼观建议乘坐景区直通车或包车。回民街、大皮院等美食街适合傍晚前往，注意饮食卫生。",
+    "budget": {
+      "total_attractions": 230,
+      "total_hotels": 1100,
+      "total_meals": 660,
+      "total_transportation": 200,
+      "total": 2190
+    }
+  },
+  "run": {
+    "ok": true,
+    "error": null,
+    "fallback_used": false,
+    "warnings": [],
+    "elapsed_ms": 133273,
+    "usage": {
+      "llm_calls": 7,
+      "prompt_tokens": 16990,
+      "completion_tokens": 16392,
+      "total_tokens": 33382,
+      "cost_cny": 0.069512,
+      "usage_source": "api",
+      "priced": true
+    }
+  }
+}

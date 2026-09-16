@@ -1,0 +1,359 @@
+{
+  "request_id": "hz-3d-nature",
+  "provenance": {
+    "recorded_at": "2026-09-16T19:37:40",
+    "git_sha": "2cc443b",
+    "git_dirty": false,
+    "agent_mode": "pipeline",
+    "rag_enabled": false,
+    "model": "deepseek-flash",
+    "temperature": 0.0,
+    "metrics_version": "2026-09-16"
+  },
+  "request": {
+    "id": "hz-3d-nature",
+    "city": "杭州",
+    "start_date": "2026-10-05",
+    "end_date": "2026-10-07",
+    "travel_days": 3,
+    "transportation": "公共交通",
+    "accommodation": "民宿",
+    "preferences": [
+      "自然风光",
+      "休闲"
+    ],
+    "free_text_input": "想住在西湖附近"
+  },
+  "plan": {
+    "city": "杭州",
+    "start_date": "2026-10-05",
+    "end_date": "2026-10-07",
+    "days": [
+      {
+        "date": "2026-10-05",
+        "day_index": 0,
+        "description": "第1天：西湖经典环湖线。上午从苏堤南端出发，漫步苏堤感受湖光山色；中午在北山街一带用餐；下午游览曲院风荷荷花区，再沿北山街、湖滨路步行至湖滨公园，傍晚在湖边看夕阳晚霞。",
+        "transportation": "公共交通（地铁1号线龙翔桥站）+ 步行 + 共享单车",
+        "accommodation": "西湖景区青芝坞文艺民宿区（民宿）",
+        "hotel": {
+          "name": "杭州未见杉民宿(西湖青芝坞店)",
+          "address": "杭州市西湖区青芝坞68号69",
+          "location": {
+            "longitude": 120.1206,
+            "latitude": 30.2568
+          },
+          "price_range": "400-600元",
+          "rating": "4.7",
+          "distance": "距苏堤约2.5公里，紧邻杭州植物园，公交/骑行约10分钟到西湖",
+          "type": "文艺民宿",
+          "estimated_cost": 500
+        },
+        "attractions": [
+          {
+            "name": "苏堤",
+            "address": "杭州市西湖区苏堤（南起南山路，北至北山街）",
+            "location": {
+              "longitude": 120.144,
+              "latitude": 30.243
+            },
+            "visit_duration": 120,
+            "description": "西湖十景之首，全长近三公里，六桥烟柳，堤上桃柳夹岸。秋日清晨或傍晚漫步堤上，两侧湖光山色尽收眼底，是感受西湖自然之美的最佳方式，建议自南向北慢行。",
+            "category": "湖景/自然风光",
+            "rating": null,
+            "photos": [],
+            "poi_id": "",
+            "image_url": null,
+            "ticket_price": 0
+          },
+          {
+            "name": "曲院风荷（荷花区）",
+            "address": "杭州市西湖区北山街89号",
+            "location": {
+              "longitude": 120.14,
+              "latitude": 30.247
+            },
+            "visit_duration": 90,
+            "description": "西湖十景之一，以荷花与酒文化为主题的大型园林，园内水面开阔、亭台掩映，九曲桥穿行荷塘之间。十月虽荷花渐谢，但残荷、水杉与庭院景观依旧清雅宜人。",
+            "category": "园林/自然风光",
+            "rating": null,
+            "photos": [],
+            "poi_id": "",
+            "image_url": null,
+            "ticket_price": 0
+          },
+          {
+            "name": "湖滨公园",
+            "address": "杭州市西湖区湖滨路（近龙翔桥地铁站）",
+            "location": {
+              "longitude": 120.1625,
+              "latitude": 30.253
+            },
+            "visit_duration": 90,
+            "description": "位于西湖东北角，临湖而建，视野开阔，是西湖最佳观景平台之一。沿湖长椅可远眺保俶塔、孤山与断桥，傍晚时分湖面晚霞与城市灯光交相辉映，适合休闲散步、拍照。",
+            "category": "城市湖滨公园",
+            "rating": null,
+            "photos": [],
+            "poi_id": "",
+            "image_url": null,
+            "ticket_price": 0
+          }
+        ],
+        "meals": [
+          {
+            "type": "breakfast",
+            "name": "青芝坞社区早餐店 / 新丰小吃",
+            "address": null,
+            "location": null,
+            "description": "杭州本地早点，推荐小笼包、虾肉馄饨、牛肉粉丝，人均消费低且味道地道，出发前补充体力。",
+            "estimated_cost": 25
+          },
+          {
+            "type": "lunch",
+            "name": "楼外楼（孤山路总店）",
+            "address": null,
+            "location": null,
+            "description": "百年老字号杭帮菜馆，招牌西湖醋鱼、龙井虾仁、宋嫂鱼羹，临湖用餐环境极佳，建议提前取号。",
+            "estimated_cost": 150
+          },
+          {
+            "type": "dinner",
+            "name": "外婆家（湖滨银泰店）",
+            "address": null,
+            "location": null,
+            "description": "人气杭帮菜连锁，性价比高，推荐茶香鸡、西湖莼菜汤、青豆泥，用餐后可步行至湖滨看夜景。",
+            "estimated_cost": 80
+          }
+        ]
+      },
+      {
+        "date": "2026-10-06",
+        "day_index": 1,
+        "description": "第2天：西湖西线清幽赏桂线。上午前往游客较少的乌龟潭，感受幽静湿地水景；中午在满觉陇一带品尝农家菜；下午漫步下满觉陇赏桂，再登九曜山俯瞰西湖与钱塘江。",
+        "transportation": "公共交通（公交4路/游3路）+ 步行 + 共享单车",
+        "accommodation": "西湖四眼井民宿聚集区（民宿）",
+        "hotel": {
+          "name": "杭州柚子花园民宿(雷峰塔店)",
+          "address": "杭州市西湖区四眼井106号",
+          "location": {
+            "longitude": 120.142,
+            "latitude": 30.2202
+          },
+          "price_range": "450-700元",
+          "rating": "4.8",
+          "distance": "距雷峰塔、苏堤南口约1公里，步行可达西湖景区南线",
+          "type": "花园精品民宿",
+          "estimated_cost": 600
+        },
+        "attractions": [
+          {
+            "name": "乌龟潭",
+            "address": "杭州市西湖区杨公堤西侧（近三台山路）",
+            "location": {
+              "longitude": 120.1275,
+              "latitude": 30.2245
+            },
+            "visit_duration": 90,
+            "description": "西湖西侧一处静谧水潭，芦苇丛生、水杉成林，游客稀少，环境清雅。木栈道沿水而行，常见野鸭、白鹭出没，是远离喧嚣、静心赏景的好去处。",
+            "category": "湿地/自然风光",
+            "rating": null,
+            "photos": [],
+            "poi_id": "",
+            "image_url": null,
+            "ticket_price": 0
+          },
+          {
+            "name": "下满觉陇（满觉陇路）",
+            "address": "杭州市西湖区满觉陇路下满觉陇一带",
+            "location": {
+              "longitude": 120.123,
+              "latitude": 30.2185
+            },
+            "visit_duration": 120,
+            "description": "杭州著名的赏桂胜地，十月金桂飘香，沿路茶室、咖啡馆与桂花林相间。可坐在茶舍里喝一杯桂花龙井，逛一逛石屋洞，是秋季最具杭州味道的休闲体验。",
+            "category": "桂花林/休闲茶乡",
+            "rating": null,
+            "photos": [],
+            "poi_id": "",
+            "image_url": null,
+            "ticket_price": 0
+          },
+          {
+            "name": "九曜山",
+            "address": "杭州市西湖区虎跑路（近太子湾公园）",
+            "location": {
+              "longitude": 120.1465,
+              "latitude": 30.2215
+            },
+            "visit_duration": 90,
+            "description": "位于西湖与钱塘江之间的山体，石阶步道平缓易登，约30分钟可达山顶。山顶可同时俯瞰西湖全景与钱塘江风光，日落时分景色尤其壮美。",
+            "category": "登高观景/山林",
+            "rating": null,
+            "photos": [],
+            "poi_id": "",
+            "image_url": null,
+            "ticket_price": 0
+          }
+        ],
+        "meals": [
+          {
+            "type": "breakfast",
+            "name": "民宿自制早餐",
+            "address": null,
+            "location": null,
+            "description": "四眼井一带民宿多提供现做早餐，通常有粥、小菜、面包与现磨咖啡，可在小院中悠闲用餐。",
+            "estimated_cost": 30
+          },
+          {
+            "type": "lunch",
+            "name": "满觉陇农家菜馆（如桂语山房周边小馆）",
+            "address": null,
+            "location": null,
+            "description": "主打山野时蔬、土鸡煲、桂花糖藕与龙井虾仁，食材新鲜，坐在桂花树下用餐极具氛围。",
+            "estimated_cost": 120
+          },
+          {
+            "type": "dinner",
+            "name": "绿茶餐厅（龙井路店）",
+            "address": null,
+            "location": null,
+            "description": "藏在茶园里的网红杭帮菜餐厅，招牌绿茶烤肉、面包诱惑、火焰虾，环境绿意盎然，适合休闲晚餐。",
+            "estimated_cost": 90
+          }
+        ]
+      },
+      {
+        "date": "2026-10-07",
+        "day_index": 2,
+        "description": "第3天：登高望远 + 运河休闲线。清晨登宝石山看西湖全景与保俶塔晨光；中午就近用餐；下午前往武林门码头，乘船游览京杭大运河杭州段，感受千年水运风情，傍晚返程。",
+        "transportation": "公共交通（公交/地铁）+ 步行 + 运河游船",
+        "accommodation": "西湖虎跑路四眼井民宿（民宿）",
+        "hotel": {
+          "name": "杭州望景度景屋精品客栈",
+          "address": "杭州市西湖区虎跑路四眼井184号",
+          "location": {
+            "longitude": 120.1423,
+            "latitude": 30.2188
+          },
+          "price_range": "400-650元",
+          "rating": "4.6",
+          "distance": "距虎跑泉约1.2公里，距苏堤南口约1.5公里，环境清幽",
+          "type": "精品客栈",
+          "estimated_cost": 500
+        },
+        "attractions": [
+          {
+            "name": "宝石山",
+            "address": "杭州市西湖区昭庆寺里街22号",
+            "location": {
+              "longitude": 120.1478,
+              "latitude": 30.2618
+            },
+            "visit_duration": 120,
+            "description": "西湖北岸的经典登高点，山石呈赭红色，日光下如宝石般闪烁。沿石阶约20分钟可达山顶，可俯瞰整个西湖、保俶塔与城市天际线，是观日出与拍摄西湖全景的绝佳位置。",
+            "category": "登高观景/山林",
+            "rating": null,
+            "photos": [],
+            "poi_id": "",
+            "image_url": null,
+            "ticket_price": 0
+          },
+          {
+            "name": "京杭大运河杭州景区（武林门码头）",
+            "address": "杭州市拱墅区环城北路226号武林门码头",
+            "location": {
+              "longitude": 120.1655,
+              "latitude": 30.2838
+            },
+            "visit_duration": 150,
+            "description": "世界文化遗产京杭大运河的杭州段，沿岸拱宸桥、桥西历史街区古韵犹存。可在武林门码头乘坐水上巴士或游船，一路欣赏运河两岸的桥梁、码头与老建筑，休闲又惬意。",
+            "category": "运河风光/水上观光",
+            "rating": null,
+            "photos": [],
+            "poi_id": "",
+            "image_url": null,
+            "ticket_price": 100
+          }
+        ],
+        "meals": [
+          {
+            "type": "breakfast",
+            "name": "知味观（早饭档）",
+            "address": null,
+            "location": null,
+            "description": "杭州老字号，推荐鲜肉小笼、猫耳朵、片儿川，热乎乎的一碗面开启登山的清晨。",
+            "estimated_cost": 30
+          },
+          {
+            "type": "lunch",
+            "name": "新白鹿餐厅（武林店）",
+            "address": null,
+            "location": null,
+            "description": "本地人常去的杭帮菜连锁，招牌蛋黄鸡翅、铁板蛏子、杭三鲜，出菜快、分量足，离武林门码头近。",
+            "estimated_cost": 70
+          },
+          {
+            "type": "dinner",
+            "name": "河坊街 / 南宋御街特色小吃",
+            "address": null,
+            "location": null,
+            "description": "返程前逛一逛老街区，可尝定胜糕、葱包桧、龙须糖、吴山烤禽，边逛边吃，感受杭州烟火气。",
+            "estimated_cost": 80
+          }
+        ]
+      }
+    ],
+    "weather_info": [
+      {
+        "date": "2026-10-05",
+        "day_weather": "晴",
+        "night_weather": "多云",
+        "day_temp": 30,
+        "night_temp": 21,
+        "wind_direction": "东北风",
+        "wind_power": "1-3级"
+      },
+      {
+        "date": "2026-10-06",
+        "day_weather": "多云",
+        "night_weather": "多云",
+        "day_temp": 29,
+        "night_temp": 23,
+        "wind_direction": "东风",
+        "wind_power": "1-3级"
+      },
+      {
+        "date": "2026-10-07",
+        "day_weather": "多云",
+        "night_weather": "阴",
+        "day_temp": 30,
+        "night_temp": 23,
+        "wind_direction": "东北风",
+        "wind_power": "1-3级"
+      }
+    ],
+    "overall_suggestions": "1. 行程节奏：三天均以“自然风光+休闲”为主线，每天2-3个景点、步行量适中，避免奔波。第一天环湖经典线，第二天清幽赏桂线（10月正值桂花季，满觉陇必去），第三天登高+运河线。\n2. 交通建议：西湖景区内建议以步行+共享单车为主，公交4路、游3路、7路可串联南线与西线；前往运河武林门码头可乘地铁1号线至武林广场站。高峰期（10:00-16:00）西湖周边道路拥堵，尽量避开打车。\n3. 住宿建议：已按“住在西湖附近”安排——青芝坞、四眼井、虎跑路三处均为西湖景区周边民宿聚集区，步行或骑行即可进入景区，环境安静且文艺氛围浓厚。国庆假期房价偏高，务必提前预订。\n4. 天气与着装：白天29-30℃、夜间21-23℃，昼夜温差较大，建议短袖+薄外套；西湖边紫外线较强，需备防晒霜、遮阳帽与墨镜；随身携带雨具以防阵雨。\n5. 门票与预约：西湖沿线大部分景点（苏堤、湖滨公园、曲院风荷、乌龟潭、满觉陇、九曜山、宝石山）均免费开放；运河游船建议提前在“杭州水上巴士”或购票平台预约。国庆期间孤山、雷峰塔等热门点需提前预约，务必留出排队时间。\n6. 美食提示：杭帮菜整体偏甜，点菜时可备注少糖；楼外楼、知味观、外婆家等热门餐厅饭点排队较长，建议错峰用餐或提前取号。\n7. 错峰建议：清晨6:00-8:00的苏堤与宝石山游客最少，光线也最美；下午可前往人流较少的乌龟潭、九曜山，体验更佳。",
+    "budget": {
+      "total_attractions": 100,
+      "total_hotels": 1600,
+      "total_meals": 675,
+      "total_transportation": 120,
+      "total": 2495
+    }
+  },
+  "run": {
+    "ok": true,
+    "error": null,
+    "fallback_used": false,
+    "warnings": [],
+    "elapsed_ms": 50776,
+    "usage": {
+      "llm_calls": 7,
+      "prompt_tokens": 16948,
+      "completion_tokens": 7373,
+      "total_tokens": 24321,
+      "cost_cny": 0.035526,
+      "usage_source": "api",
+      "priced": true
+    }
+  }
+}

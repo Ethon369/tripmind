@@ -1,0 +1,164 @@
+{
+  "request_id": "bj-1d-history",
+  "provenance": {
+    "recorded_at": "2026-09-16T19:37:40",
+    "git_sha": "2cc443b",
+    "git_dirty": false,
+    "agent_mode": "pipeline",
+    "rag_enabled": false,
+    "model": "deepseek-flash",
+    "temperature": 0.0,
+    "metrics_version": "2026-09-16"
+  },
+  "request": {
+    "id": "bj-1d-history",
+    "city": "北京",
+    "start_date": "2026-10-01",
+    "end_date": "2026-10-01",
+    "travel_days": 1,
+    "transportation": "公共交通",
+    "accommodation": "经济型酒店",
+    "preferences": [
+      "历史文化"
+    ],
+    "free_text_input": ""
+  },
+  "plan": {
+    "city": "北京",
+    "start_date": "2026-10-01",
+    "end_date": "2026-10-01",
+    "days": [
+      {
+        "date": "2026-10-01",
+        "day_index": 0,
+        "description": "第1天：中轴线经典历史文化一日游——上午探访世界文化遗产故宫博物院，感受明清皇家宫殿的恢弘气象；中午在前门大栅栏品尝老北京炸酱面；下午参观中国国家博物馆，纵览中华五千年文明脉络；傍晚登临正阳门箭楼，俯瞰前门大街与中轴线暮色。",
+        "transportation": "公共交通（地铁+步行），地铁1号线、8号线为主",
+        "accommodation": "经济型酒店",
+        "hotel": {
+          "name": "wohkoon者行孙酒店（故宫店）",
+          "address": "北京市东城区沙滩后街16号（景山东门对面胡同内）",
+          "location": {
+            "longitude": 116.403083,
+            "latitude": 39.923733
+          },
+          "price_range": "260-360元",
+          "rating": "4.6",
+          "distance": "距离故宫博物院约1.2公里，步行约15分钟",
+          "type": "经济型连锁酒店",
+          "estimated_cost": 300
+        },
+        "attractions": [
+          {
+            "name": "故宫博物院",
+            "address": "北京市东城区景山前街4号",
+            "location": {
+              "longitude": 116.397026,
+              "latitude": 39.918058
+            },
+            "visit_duration": 180,
+            "description": "明清两代皇家宫殿，世界现存规模最大、保存最完整的木质结构古建筑群，世界文化遗产。建议从午门进入，沿中轴线依次参观太和殿、中和殿、保和殿，再游览乾清宫、交泰殿、坤宁宫及御花园，最后从神武门出。10月为旺季，需提前7天在官网实名预约购票，并携带身份证入园。",
+            "category": "世界文化遗产/皇家宫殿",
+            "rating": null,
+            "photos": [],
+            "poi_id": "",
+            "image_url": null,
+            "ticket_price": 60
+          },
+          {
+            "name": "中国国家博物馆",
+            "address": "北京市东城区东长安街16号天安门广场东侧",
+            "location": {
+              "longitude": 116.401368,
+              "latitude": 39.904187
+            },
+            "visit_duration": 150,
+            "description": "中国最大的综合性博物馆，藏品逾140万件。必看展览包括地下一层的“古代中国”基本陈列（后母戊鼎、四羊方尊等镇馆之宝）以及“复兴之路”主题展览。免费参观但需提前1-7天在官方渠道实名预约，周一闭馆（法定节假日除外）。",
+            "category": "国家级博物馆",
+            "rating": null,
+            "photos": [],
+            "poi_id": "",
+            "image_url": null,
+            "ticket_price": 0
+          },
+          {
+            "name": "正阳门箭楼",
+            "address": "北京市东城区前门大街2号",
+            "location": {
+              "longitude": 116.397757,
+              "latitude": 39.899375
+            },
+            "visit_duration": 60,
+            "description": "北京内城正阳门的重要组成部分，始建于明正统四年，是北京城门中规模最大、保存最完整的箭楼，为北京城南中轴线的标志性建筑。登楼可眺望天安门广场与前门大街，感受老北京城门格局与中轴线历史文脉。",
+            "category": "历史遗址/古建筑",
+            "rating": null,
+            "photos": [],
+            "poi_id": "",
+            "image_url": null,
+            "ticket_price": 20
+          }
+        ],
+        "meals": [
+          {
+            "type": "breakfast",
+            "name": "护国寺小吃（地安门店）",
+            "address": null,
+            "location": null,
+            "description": "老北京传统早餐铺，推荐豆汁配焦圈、面茶、糖火烧、驴打滚，体验地道京味早点，为一天的游览补充能量。",
+            "estimated_cost": 25
+          },
+          {
+            "type": "lunch",
+            "name": "前门大栅栏·老北京炸酱面馆",
+            "address": null,
+            "location": null,
+            "description": "故宫神武门出后沿景山前街步行或乘地铁至前门，品尝手工面条配八碟菜码的老北京炸酱面，另可点豌豆黄、芥末墩等京味小菜。",
+            "estimated_cost": 45
+          },
+          {
+            "type": "dinner",
+            "name": "前门大街·便宜坊（前门店）",
+            "address": null,
+            "location": null,
+            "description": "创立于明永乐十四年的老字号烤鸭店，焖炉烤鸭皮酥肉嫩，是北京历史最悠久的烤鸭品牌之一。搭配荷叶饼、甜面酱、葱丝享用，为首都一日行画上圆满句号。",
+            "estimated_cost": 120
+          }
+        ]
+      }
+    ],
+    "weather_info": [
+      {
+        "date": "2026-10-01",
+        "day_weather": "晴",
+        "night_weather": "多云",
+        "day_temp": 22,
+        "night_temp": 12,
+        "wind_direction": "南风",
+        "wind_power": "1-3级"
+      }
+    ],
+    "overall_suggestions": "1. 10月1日为国庆黄金周首日，天安门广场及故宫周边人流密集、安检严格，务必提前7天在“故宫博物院”官方小程序预约门票，中国国家博物馆需提前1-7天在其官方渠道预约，正阳门箭楼同样建议提前预约，全部凭身份证入园。2. 建议早上7:30前出发，8:00-8:30抵达故宫午门排队安检，避开人流高峰；游览顺序为故宫→国博→正阳门箭楼，全程沿中轴线由北向南，步行衔接顺畅（各点间约1.5-2公里）。3. 交通以地铁为主：推荐购买“亿通行”App或使用手机NFC刷码乘地铁，单程票价3-6元，全天公共交通费用约20元；国庆期间天安门东西站可能封站，请留意地铁公告并预留绕行时间。4. 10月初北京昼夜温差达10℃左右，白天单衣加薄外套即可，傍晚登箭楼赏暮色时需添一件厚外套。5. 全程为步行游览，建议穿舒适运动鞋，随身携带折叠水杯与充电宝。6. 若时间紧张或体力不足，可舍弃国博部分展区，优先保证故宫3小时完整游览与正阳门箭楼登楼体验。7. 节假日餐饮排队时间长，午餐可提前在大栅栏取号或错峰12:30后用餐。",
+    "budget": {
+      "total_attractions": 80,
+      "total_hotels": 300,
+      "total_meals": 190,
+      "total_transportation": 20,
+      "total": 590
+    }
+  },
+  "run": {
+    "ok": true,
+    "error": null,
+    "fallback_used": false,
+    "warnings": [],
+    "elapsed_ms": 25451,
+    "usage": {
+      "llm_calls": 7,
+      "prompt_tokens": 16897,
+      "completion_tokens": 4218,
+      "total_tokens": 21115,
+      "cost_cny": 0.021099,
+      "usage_source": "api",
+      "priced": true
+    }
+  }
+}
