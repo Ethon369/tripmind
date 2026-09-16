@@ -13,10 +13,17 @@
 - `config.py`             阈值与版本号
 - `metrics.py`            A 类(自洽性)+ C 类(成本)指标,每个都是纯函数
 - `metrics_grounding.py`  B 类:需要冻结的真实 POI 做 ground truth
-- `run_eval.py`           (待建)CLI:跑固定输入集、出报告
-- `report.py`             (待建)把指标渲染成 markdown
+- `run_eval.py`           CLI:录制(--mode=record)/ 回放(--mode=replay)
+- `report.py`             把指标聚合、渲染成 markdown(纯函数)
 
-ground truth 由 `scripts/recorder.py` 录进 `data/frozen/amap/`,详见那个脚本。
+两层冻结,把「输入」和「被测系统」隔开
+--------------------------------------
+- `data/frozen/amap/`   高德响应的 ground truth,由 `scripts/recorder.py` 录
+- `data/frozen/plans/`  行程的录制结果,由 `run_eval.py --mode=record` 录
+
+**分开是因为钱。** 录一次要花真钱(10 条约 ¥1.2),而改指标口径、改报告排版
+是天天要做的事。冻住之后 replay 完全不碰网络,改多少次都免费 ——
+不这样的话,你就不会去改指标了。
 
 两条设计原则
 ------------
@@ -32,6 +39,7 @@ ground truth 由 `scripts/recorder.py` 录进 `data/frozen/amap/`,详见那个�
 from .config import METRICS_VERSION
 from .metrics import EvalContext, Metric, evaluate, summarize
 from .metrics_grounding import ground_truth_for, load_inventory
+from .report import RequestResult, aggregate, render_report
 
 __all__ = [
     "METRICS_VERSION",
@@ -41,4 +49,7 @@ __all__ = [
     "summarize",
     "ground_truth_for",
     "load_inventory",
+    "RequestResult",
+    "aggregate",
+    "render_report",
 ]

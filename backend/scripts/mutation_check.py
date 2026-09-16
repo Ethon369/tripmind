@@ -59,6 +59,8 @@ METRICS = BACKEND / "app" / "eval" / "metrics.py"
 GROUNDING = BACKEND / "app" / "eval" / "metrics_grounding.py"
 PARSING = BACKEND / "app" / "services" / "amap_parsing.py"
 LAUNCHER = BACKEND / "app" / "services" / "mcp_launcher.py"
+EVAL_REPORT = BACKEND / "app" / "eval" / "report.py"
+RUN_EVAL = BACKEND / "app" / "eval" / "run_eval.py"
 RECORDER = BACKEND / "scripts" / "recorder.py"
 REPORT = BACKEND / "data" / "eval" / "mutation_report.txt"
 
@@ -276,6 +278,68 @@ MUTATIONS: list[tuple[Path, str, str, str]] = [
         'AMAP_MCP_PACKAGE = "amap-mcp"',
         "包名写错 —— 服务起不来,同样是「工具数 0 但不报错」",
     ),
+    # ---- app/eval/report.py ----
+    (
+        EVAL_REPORT,
+        '        "uncomputable": len(metrics) - len(values),',
+        '        "uncomputable": 0,',
+        "报告不再统计「算不出」—— 「不知道」和「合格」被混成一体",
+    ),
+    (
+        EVAL_REPORT,
+        "    judged = [m for m in metrics if m.ok is not None]",
+        "    judged = list(metrics)",
+        "报告把「不判定」的参考类也塞进判定数 —— 成本指标会拉高通过率",
+    ),
+    (
+        EVAL_REPORT,
+        "            if m.ok is False\n",
+        "            if not m.ok\n",
+        "报告把「不作判定」当成「不合格」—— 算不出的条目被列成故障",
+    ),
+    (
+        EVAL_REPORT,
+        '    if value is None:\n        return "—"',
+        '    if value is None:\n        return "0"',
+        "「算不出」在报告里显示成 0 —— 和「真的是 0」分不清,三态退化成两态",
+    ),
+    (
+        EVAL_REPORT,
+        "    for i, (title, body) in enumerate(_LIMITATIONS, 1):",
+        "    for i, (title, body) in enumerate([], 1):",
+        "报告不再输出局限声明 —— 数字会被读成比实际更确定",
+    ),
+    # ---- app/eval/run_eval.py ----
+    (
+        RUN_EVAL,
+        '        "fallback_used": fallback_used,',
+        '        "fallback": fallback_used,',
+        "运行记录的键名和 metrics.py 里读的对不上 —— 降级指标静默变成「无法计算」",
+    ),
+    (
+        RUN_EVAL,
+        '        "warnings": list(warnings),',
+        '        "warnings": warnings,',
+        "运行记录和调用方共享同一个 list —— 调用方之后 append 会污染已录的数据",
+    ),
+    (
+        RUN_EVAL,
+        "        missing = [w for w in wanted if w not in known]\n        if missing:",
+        "        missing = []\n        if missing:",
+        "--only 里打错的 id 被静默跳过 —— 会得到一份「只有 9 条」的报告而毫无察觉",
+    ),
+    (
+        RUN_EVAL,
+        '    with open(path, "w", encoding="utf-8", newline="") as f:',
+        '    with open(path, "w", encoding="utf-8") as f:',
+        "冻结文件写成 CRLF —— 内容一样但 git 工作区被污染(真实踩过的坑)",
+    ),
+    (
+        RUN_EVAL,
+        "    if not files:\n        raise FileNotFoundError(",
+        "    if not files:\n        return [], {}, []",
+        "没有冻结数据时返回空而不是报错 —— 会静默出一份「0 条行程」的假报告",
+    ),
     # ---- scripts/recorder.py ----
     (
         RECORDER,
@@ -366,7 +430,9 @@ def run_pytest() -> tuple[int, str]:
 def main() -> int:
     originals = {
         path: _read(path)
-        for path in {GEO, METRICS, GROUNDING, PARSING, LAUNCHER, RECORDER}
+        for path in {
+            GEO, METRICS, GROUNDING, PARSING, LAUNCHER, EVAL_REPORT, RUN_EVAL, RECORDER
+        }
     }
     lines: list[str] = []
 

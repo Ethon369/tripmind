@@ -52,6 +52,12 @@ cd backend && ./venv/Scripts/python.exe scripts/check_rag_env.py
 cd backend && ./venv/Scripts/python.exe scripts/recorder.py --dry-run   # 先看要发多少请求
 cd backend && ./venv/Scripts/python.exe scripts/recorder.py             # 真录
 
+# 评测 —— 录制是**唯一花钱的一步**(10 条约 ¥1.2、20 分钟)
+cd backend && ./venv/Scripts/python.exe -m app.eval.run_eval --mode=record --tag=baseline --dry-run  # 先看要花多少,不花钱
+cd backend && ./venv/Scripts/python.exe -m app.eval.run_eval --mode=record --tag=baseline            # 真跑(无 --force 会拒绝覆盖)
+# 出报告 —— 免费、不碰网络,想跑多少次跑多少次
+cd backend && ./venv/Scripts/python.exe -m app.eval.run_eval --mode=replay --tag=baseline
+
 # 单元测试(首次先装测试依赖:./venv/Scripts/python.exe -m pip install -r requirements-dev.txt)
 cd backend && ./venv/Scripts/python.exe -m pytest tests/ -q
 
@@ -112,9 +118,28 @@ POST /api/trip/plan
 |---|---|
 | `app/observability/` | `run_logger.py` 记 JSONL 事件流;`metering.py` 计量 token;`pricing.py` 峰谷定价 |
 | `app/store/` | stdlib `sqlite3` 手写 SQL,3 张表(plans / runs / llm_calls) |
-| `app/eval/` | 评测 harness:`geo`/`config`/`metrics`(自洽性+成本)/`metrics_grounding`(接地性) |
+| `app/eval/` | 评测 harness:`geo`/`config`/`metrics`(自洽性+成本)/`metrics_grounding`(接地性)/`run_eval`(录制回放 CLI)/`report`(出 markdown) |
 | `app/services/amap_parsing.py` | 高德返回值解析(剥 MCP 外壳、拆 `"经度,纬度"`)。纯函数,`recorder.py` 与 P6 共用 |
 | `app/services/mcp_launcher.py` | 拼启动高德 MCP 的命令,用绝对路径找 `uvx`。纯函数,两个 `MCPTool` 创建点共用 |
+
+### 评测为什么要「录制 / 回放」两层
+
+改指标口径、改报告排版是天天要做的事,而跑一次真生成要 **¥1.2 和 20 分钟**。
+两者绑在一起的结果是:**你再也不会去改指标了**。
+
+| 模式 | 做什么 | 花钱吗 |
+|---|---|---|
+| `--mode=record` | 跑 agent,把行程冻到 `data/frozen/plans/{tag}/` | ¥0.12/条 |
+| `--mode=replay` | 读冻结的行程算指标、出报告 | **不花**,不碰网络 |
+
+冻的**不只是行程**,还有当时的**环境指纹**(git sha、是否脏工作区、模型、
+temperature、编排模式)。没有它,翻出一份旧报告时你不知道它是哪个提交测的 ——
+那样的前后对比是假的。指纹在报告第二章里。
+
+这和 P2 冻结高德响应是同一个思路:**把「输入」和「被测系统」隔开**,
+两次跑的差异才只可能来自代码。
+
+⚠️ `record` 会花真钱**并且覆盖已有数据**,所以不加 `--force` 时直接拒绝执行。
 
 ### 前端的三种数据来源
 
@@ -241,7 +266,7 @@ P5 的 harness 怎么量化这个问题:两个互补的指标 ——
 | P2 | 可观测性 + 回调式管线 + 修 health 端点 | ✅ |
 | P3 | token / 成本计量 | ✅ |
 | P4 | SQLite 持久化 + 三页面 + 分享链接 | ✅ |
-| **P5** | **评测 harness + baseline 报告** | 🔶 **进行中**:5a 指标 ✅ / 单测 ✅ / 5b 接地性 ✅ / 5c CLI+报告 ⬜ |
+| **P5** | **评测 harness + baseline 报告** | 🔶 **代码完成**:5a 指标 ✅ / 单测 ✅ / 5b 接地性 ✅ / 5c CLI+报告 ✅ / **baseline.md 待跑**(要花 ¥1.2) |
 | P6 | 数据接地,修掉上面的编造问题 | ⬜ |
 | P7 | RAG 双层知识库(poi_facts + city_guides) | ⬜ |
 | P8 | 并发 + supervisor-worker 编排对比 | ⬜ |

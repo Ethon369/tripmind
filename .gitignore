@@ -29,7 +29,11 @@ frontend/node_modules/.vite/
 # 本地产物(可重新生成,不进仓库)
 # ============================================
 backend/data/runs/
-backend/data/eval/
+# 突变报告(report.txt)是本地产物,但评测报告(*.md)要提交 ——
+# `baseline.md` 是简历上的东西,不提交别人在 GitHub 上看不到。
+# 而且它是**可复现**的:有 data/frozen/ 里的冻结数据,谁都能重跑出同一份。
+backend/data/eval/*
+!backend/data/eval/*.md
 *.db
 *.db-wal
 *.db-shm
