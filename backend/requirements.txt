@@ -40,4 +40,7 @@ huggingface_hub>=0.25.0
 # 版本钉在 2.5.x —— 与本机 Milvus 服务端 2.5.14 对齐;
 # pymilvus 3.x 是给 Milvus 3.x 服务端用的,不要升。
 pymilvus>=2.5,<2.6
-markitdown>=0.0.1
+#
+# 带 [pdf] extra 是因为它提供上传攻略的 PDF 解析后端(pdfminer-six /
+# pdfplumber)。不装的话上传 PDF 会得到一句明确的提示,不会崩。
+markitdown[pdf]>=0.0.1

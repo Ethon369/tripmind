@@ -5,105 +5,182 @@
       <header class="masthead">
         <h1 class="masthead-title">知识库</h1>
         <p class="masthead-sub">
-          行程生成时参考的外部知识：1750 条带真实坐标的 POI 事实，加 5 篇城市攻略。
-          在这里可以试检索、确认它是否生效，以及改动后如何重新灌入。
+          把你自己找到的攻略放进来，生成行程时会参考这些内容，并在行程里标出来源。
+          内置的 POI 事实与城市攻略照常生效。
         </p>
       </header>
 
-      <!-- ---------------- 状态：一行 ----------------
-           原来这里是三张卡片，吃掉整个首屏。现在压成一行，
-           详情收进「详情」按钮 —— 首屏应该留给真正要做的事。 -->
-      <KnowledgeStatusBar
-        :status="status"
-        :loading="loading"
-        :error="error"
-        :counts-error="countsError"
-        :loading-counts="loadingCounts"
-        @refresh="refresh"
-        @goto-ingest="scrollToIngest"
-        @copy-env="copyEnableSnippet"
-      />
+      <!-- ---------------- RAG 开关警示 ----------------
+         这是这一页**最重要的一条状态**:ENABLE_RAG 默认是关的(评测基线)。
+         关着的时候上传能成功、入库也成功,但生成行程时完全不会用到 ——
+         用户无从察觉。所以必须放在最上面,而不是折叠进状态条里。 -->
+      <div v-if="status && !status.enabled" class="rag-off" role="status">
+        <p class="rag-off-text">
+          生成行程时<strong>不会</strong>使用知识库 —— 现在上传的内容不会被用到。
+        </p>
+        <a-button size="small" type="primary" :loading="toggling" @click="enableRag">
+          立即开启
+        </a-button>
+      </div>
+      <div v-else-if="status?.enabled_source === 'runtime'" class="rag-runtime" role="status">
+        知识库已开启（上传时自动打开的临时开关，重启后恢复 .env 里的设置）
+      </div>
 
-      <!-- ---------------- 检索（主体） ---------------- -->
-      <section ref="searchEl" class="kb-section">
-        <KnowledgeSearchPanel ref="searchPanelRef" @goto-ingest="scrollToIngest" />
-      </section>
-
-      <!-- ---------------- 维护（折叠：灌库 + 数据源） ---------------- -->
-      <section ref="ingestEl" class="kb-section">
-        <KnowledgeMaintenancePanel
-          :status="status"
-          @finished="onIngestFinished"
-          @try-search="onTrySearch"
+      <!-- ---------------- 主体:上传 ---------------- -->
+      <section class="kb-section">
+        <KnowledgeUploadPanel
+          :available="status?.available ?? false"
+          :reason="status?.reason ?? ''"
+          @ingested="onDocsChanged"
         />
       </section>
 
-      <!-- ---------------- 说明：收成一行链接 ----------------
-           原来是常驻的折叠区块，占了页面底部一整块。
-           这是「需要时才会看」的背景知识，放进弹窗更合适。 -->
+      <!-- ---------------- 主体:我上传的攻略 ---------------- -->
+      <section class="kb-section">
+        <KnowledgeDocList
+          :docs="docs"
+          :summary="docsSummary"
+          :loading="docsLoading"
+          @refresh="loadDocs"
+          @changed="loadDocs"
+          @deleted="onDocsChanged"
+        />
+      </section>
+
+      <!-- ---------------- 进阶(折叠) ----------------
+         状态条、检索调试、内置库维护都是**给维护者看**的东西 ——
+         用户传攻略用不上它们,但排查问题时缺一不可。
+         所以不是删掉,是收进折叠区:默认收起,展开即用。 -->
+      <section class="kb-section">
+        <a-collapse v-model:activeKey="advOpen" ghost class="adv">
+          <a-collapse-panel key="advanced" header="进阶：状态 · 检索调试 · 内置库维护">
+            <div class="adv-body">
+              <KnowledgeStatusBar
+                :status="status"
+                :loading="loading"
+                :error="error"
+                :counts-error="countsError"
+                :loading-counts="loadingCounts"
+                @refresh="refresh"
+                @goto-ingest="openAdvanced"
+                @copy-env="copyEnableSnippet"
+              />
+
+              <KnowledgeSearchPanel ref="searchPanelRef" @goto-ingest="openAdvanced" />
+
+              <KnowledgeMaintenancePanel
+                :status="status"
+                @finished="onMaintenanceFinished"
+                @try-search="onTrySearch"
+              />
+            </div>
+          </a-collapse-panel>
+        </a-collapse>
+      </section>
+
+      <!-- ---------------- 说明 ---------------- -->
       <footer class="kb-foot">
         <a-button type="text" @click="helpOpen = true">这套知识库是怎么工作的？</a-button>
       </footer>
     </div>
 
-    <a-modal
-      v-model:open="helpOpen"
-      title="知识库说明"
-      :footer="null"
-      :width="720"
-    >
+    <a-modal v-model:open="helpOpen" title="知识库说明" :footer="null" :width="720">
       <KnowledgeHelpPanel />
     </a-modal>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue';
+import { onMounted, ref } from 'vue';
 import { message } from 'ant-design-vue';
 import KnowledgeStatusBar from '@/components/knowledge/KnowledgeStatusBar.vue';
 import KnowledgeSearchPanel from '@/components/knowledge/KnowledgeSearchPanel.vue';
 import KnowledgeMaintenancePanel from '@/components/knowledge/KnowledgeMaintenancePanel.vue';
 import KnowledgeHelpPanel from '@/components/knowledge/KnowledgeHelpPanel.vue';
+import KnowledgeUploadPanel from '@/components/knowledge/KnowledgeUploadPanel.vue';
+import KnowledgeDocList from '@/components/knowledge/KnowledgeDocList.vue';
 import { useKnowledgeStatus } from '@/composables/useKnowledgeStatus';
+import {
+  listKnowledgeDocs,
+  toggleKnowledgeRag,
+} from '@/services/api';
+import type { KnowledgeDocSummary, KnowledgeDocsSummary } from '@/types';
 
 /**
  * 知识库页面（壳层）。
  *
- * 这一版做了**减法**。原来页面是 5 个平铺区块：
- *   环境状态（拆成 3 张卡）／ 检索调试 ／ 数据源 ／ 灌库 ／ 说明
- * 其中数据源、灌库、说明是"偶尔用一次"的东西，却占了约 60% 的页面，
- * 而首屏被三张状态卡占满 —— 用户进来是想检索的，不是来读状态面板的。
+ * 这一版把页面的**主角换掉了**。原来的定位是「RAG 的仪表盘 + 调试台」,
+ * 回答的是"我的 RAG 现在什么状态" —— 只有维护者能用,普通用户进来看不懂。
  *
- * 现在：
- *   状态 → 一行（详情可展开）
- *   检索 → 主体
- *   维护 → 折叠（灌库 + 数据源合并，因为预览接口本来就在统计数据源）
- *   说明 → 底部一行链接，点开弹窗
+ * 现在回答的是「我想把我自己的攻略放进来」:
+ *   上传(主体) → 我上传的攻略(列表) → 生成行程时被引用,并标出来源
+ *
+ * 原来的四块并没有删,全部收进了「进阶」折叠区:
+ *   状态条 / 检索调试 / 内置库维护 —— 排查问题时缺一不可,
+ *   但它们不是用户进这个页面的理由。
+ *
+ * 检索调试**刻意保留**而不是删掉:它是"证明 RAG 确实在工作"的唯一工具
+ * (能搜「紫禁城」命中别名字段、能看到相似度分数),
+ * 演示和排错都靠它。它的问题只是不该占据页面主体。
  */
 
 const { status, loading, error, countsError, loadingCounts, refresh, refreshCounts } =
   useKnowledgeStatus();
 
 const helpOpen = ref(false);
+const toggling = ref(false);
+const advOpen = ref<string[]>([]);
+
+// ---- 上传的攻略列表 ----
+const docs = ref<KnowledgeDocSummary[]>([]);
+const docsSummary = ref<KnowledgeDocsSummary | null>(null);
+const docsLoading = ref(false);
 
 const searchPanelRef = ref<InstanceType<typeof KnowledgeSearchPanel> | null>(null);
-const searchEl = ref<HTMLElement | null>(null);
-const ingestEl = ref<HTMLElement | null>(null);
 
-function scrollTo(el: HTMLElement | null) {
-  el?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+function openAdvanced() {
+  advOpen.value = ['advanced'];
 }
 
-const scrollToIngest = () => scrollTo(ingestEl.value);
+async function loadDocs() {
+  docsLoading.value = true;
+  try {
+    const res = await listKnowledgeDocs();
+    docs.value = res.docs;
+    docsSummary.value = res.summary;
+  } catch (e: unknown) {
+    message.error((e as Error)?.message || '读取攻略列表失败');
+  } finally {
+    docsLoading.value = false;
+  }
+}
+
+/** 文档列表变化(入库/删除)要同时刷两处:列表本身 + 状态里的 uploaded 计数 */
+function onDocsChanged() {
+  void loadDocs();
+  refreshCounts();
+}
+
+/** 内置库灌完只影响计数,不影响上传文档 */
+function onMaintenanceFinished() {
+  refreshCounts();
+}
+
+async function enableRag() {
+  toggling.value = true;
+  try {
+    const res = await toggleKnowledgeRag(true);
+    message.success(res.message);
+    await refresh();
+  } catch (e: unknown) {
+    message.error((e as Error)?.message || '开启失败');
+  } finally {
+    toggling.value = false;
+  }
+}
 
 function onTrySearch(query: string) {
-  scrollTo(searchEl.value);
   searchPanelRef.value?.search(query);
-}
-
-/** 灌库完成后只刷新计数，不重跑可用性检查（可用性不会因为灌库而变化） */
-function onIngestFinished() {
-  refreshCounts();
 }
 
 async function copyEnableSnippet() {
@@ -116,89 +193,99 @@ async function copyEnableSnippet() {
     message.info(`请手动添加到 backend/.env：${snippet}`, 8);
   }
 }
+
+onMounted(() => {
+  void loadDocs();
+});
 </script>
 
 <style scoped>
 .kb {
-  min-height: 100%;
-  background: var(--bg-page);
-  padding: var(--space-7) 0 var(--space-9);
+  padding: var(--space-6) var(--space-4) var(--space-9);
 }
 
 .kb-inner {
-  max-width: var(--container-narrow);
+  max-width: var(--container);
   margin: 0 auto;
-  padding-inline: var(--pad-page-sm);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
 }
 
-@media (min-width: 768px) {
-  .kb-inner {
-    padding-inline: var(--pad-page-md);
-  }
-}
-
-@media (min-width: 992px) {
-  .kb-inner {
-    padding-inline: 0;
-  }
-}
-
-/* ---------------- 页头 ----------------
- * 功能页用左对齐的常规页头，不做居中的 hero ——
- * 用户是来做事的，不是来看封面。
- */
-.masthead {
-  margin-bottom: var(--space-6);
-  animation: fadeInUp var(--dur-slow) var(--ease-out) both;
-}
-
+/* ---------------- 页头 ---------------- */
 .masthead-title {
+  margin: 0 0 var(--space-2);
   font-size: var(--fs-h1);
   font-weight: var(--fw-semibold);
   letter-spacing: var(--ls-tight);
   color: var(--text-1);
-  margin-bottom: var(--space-2);
 }
 
 .masthead-sub {
+  margin: 0;
+  max-width: 62ch;
   font-size: var(--fs-body);
   line-height: var(--lh-body);
   color: var(--text-2);
-  max-width: 62ch;
+}
+
+/* ---------------- RAG 开关 ---------------- */
+.rag-off {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  padding: var(--space-3) var(--space-4);
+  background: var(--warning);
+  border-radius: var(--radius-md);
+}
+
+.rag-off-text {
+  margin: 0;
+  font-size: var(--fs-caption);
+  color: #4b2a05;
+}
+
+.rag-off-text strong {
+  color: #4b2a05;
+}
+
+.rag-runtime {
+  padding: var(--space-2) var(--space-4);
+  background: var(--bg-tint);
+  border-radius: var(--radius-md);
+  font-size: var(--fs-micro);
+  color: var(--brand-ink);
 }
 
 /* ---------------- 区块 ---------------- */
 .kb-section {
-  margin-top: var(--space-6);
-  /* 锚点滚动留出吸顶栏的高度，否则 scrollIntoView 会把标题顶到栏后面 */
-  scroll-margin-top: calc(var(--header-h) + var(--space-5));
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
 }
 
-/* ---------------- 页脚 ---------------- */
+/* ---------------- 进阶 ---------------- */
+.adv {
+  border-top: 1px solid var(--line-1);
+}
+
+.adv-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  padding-top: var(--space-4);
+}
+
 .kb-foot {
-  margin-top: var(--space-6);
   display: flex;
   justify-content: center;
 }
 
-/* ---------------- 响应式 ---------------- */
-@media (max-width: 767px) {
-  .kb {
-    padding: var(--space-6) 0 var(--space-8);
-  }
-
-  .kb-inner {
-    padding-inline: var(--space-3);
-  }
-
-  .kb-section {
-    margin-top: var(--space-5);
-  }
-}
-
 @media (max-width: 575px) {
-  .kb-section {
-    scroll-margin-top: calc(var(--header-h-mobile) + var(--space-4));
+  .kb {
+    padding: var(--space-4) var(--space-3) var(--space-8);
   }
 }
 </style>

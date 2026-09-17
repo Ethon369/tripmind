@@ -68,7 +68,7 @@ _MAX_TEXT_BYTES = 16384
 _MAX_ID_BYTES = 64
 
 # 每次发给 embedding 接口的条数。太大容易超单请求上限,太小则请求次数爆炸
-_EMBED_BATCH = 32
+EMBED_BATCH = 32
 
 
 # ===========================================================================
@@ -419,6 +419,26 @@ class MilvusKnowledgeStore:
     def flush(self) -> None:
         self.client.flush(self.collection)
 
+    def delete(self, ids: list[str]) -> int:
+        """按主键精确删除,返回删除的条数。
+
+        用**显式 id 列表**而不是 `like "upload:xxx:%"` 前缀匹配:
+        「自己记录自己写了什么,删的时候就删什么」最可靠 ——
+        前缀匹配在表达式转义上有坑,而且一旦 id 生成规则变了,
+        老数据的清理逻辑就会悄悄失效,症状是"删了还在,检索照样搜出来"。
+        """
+        if not ids or not self.exists():
+            return 0
+
+        deleted = 0
+        batch = 500
+        for i in range(0, len(ids), batch):
+            part = ids[i : i + batch]
+            self.client.delete(self.collection, ids=part)
+            deleted += len(part)
+        self.flush()
+        return deleted
+
     def search(self, vector: list[float], top_k: int) -> list[dict]:
         hits = self.client.search(
             self.collection,
@@ -452,16 +472,32 @@ class MilvusKnowledgeStore:
 
 
 class KnowledgeService:
-    """双层知识库的统一入口。
+    """三层知识库的统一入口。
 
     **检索失败绝不能让行程规划挂掉。** RAG 是增强,不是依赖:Milvus 没起来、
     embedding 接口超时、collection 还没建 —— 这些情况下一律返回空结果,
     让管线照常往下走。所以这里每个对外方法都自己吞异常并记录原因,
     由 `available()` 把原因报出来给健康检查和日志看。
+
+    三层各自一个 collection(不是分区):
+
+        poi_facts      内置 POI 事实(高德库存,1750 条)
+        city_guides    内置城市攻略(data/knowledge_base/city_guides/*.md)
+        uploaded       用户上传的攻略(解析自 Markdown / 文本 / PDF)
+
+    上传内容**单独一层**而不是混进内置攻略,原因是「重灌内置库」会
+    drop 整个 collection —— 混在一起的话,用户传的攻略会被一起清掉。
+    三层用同一个 embedder、同一个 COSINE 度量,分数**可直接比较**,
+    归并时才能公平地排序。
     """
 
     NAMESPACE_POI = "poi_facts"
     NAMESPACE_GUIDES = "city_guides"
+    NAMESPACE_UPLOAD = "uploaded"
+
+    # 三层一起列,stats / available / retrieve 归并都按这份走。
+    # 新加层时只改这里 —— 否则总会漏掉某一处,症状是"检索时好时坏"。
+    ALL_NAMESPACES = (NAMESPACE_POI, NAMESPACE_GUIDES, NAMESPACE_UPLOAD)
 
     def __init__(self, settings: Settings | None = None):
         self.settings = settings or get_settings()
@@ -552,19 +588,23 @@ class KnowledgeService:
     # ---------------- stores ----------------
 
     def store(self, namespace: str) -> MilvusKnowledgeStore:
-        key = self.NAMESPACE_POI if namespace == self.NAMESPACE_POI else self.NAMESPACE_GUIDES
-        if key not in self._stores:
-            collection = (
-                self.settings.rag_collection_poi
-                if key == self.NAMESPACE_POI
-                else self.settings.rag_collection_guides
-            )
-            self._stores[key] = MilvusKnowledgeStore(
+        # 用显式映射而不是 if/else 逐层判断:三层之后 if/else 已经开始出错,
+        # 早期版本里「非 POI 一律当 guides」这种写法,加第三层时必然串层。
+        collections = {
+            self.NAMESPACE_POI: self.settings.rag_collection_poi,
+            self.NAMESPACE_GUIDES: self.settings.rag_collection_guides,
+            self.NAMESPACE_UPLOAD: self.settings.rag_collection_uploaded,
+        }
+        if namespace not in collections:
+            raise ValueError(f"未知的知识库分层: {namespace!r}")
+
+        if namespace not in self._stores:
+            self._stores[namespace] = MilvusKnowledgeStore(
                 uri=self.settings.milvus_uri,
-                collection=collection,
+                collection=collections[namespace],
                 dimension=int(self.settings.embed_dim_expected),
             )
-        return self._stores[key]
+        return self._stores[namespace]
 
     # ---------------- 检索 ----------------
 
@@ -597,23 +637,37 @@ class KnowledgeService:
             for r in rows
         ]
 
-    def retrieve_for_request(self, request: Any, top_k: int | None = None) -> list[KnowledgeHit]:
-        """两层一起检索,按分数归并。
+    def _retrieve_all_layers(self, query: str, k: int) -> list[KnowledgeHit]:
+        """三层一起检索后按分数归并。
 
-        两层用**同一个 embedder、同一个度量(COSINE)**,所以分数**可以直接比**。
-        这点值得写清楚:如果两层用了不同的 embedding 模型,分数就不可比,
+        抽成私有方法是因为归并逻辑出现了两次(planner 与调试台) ——
+        之前「两层各自取 k 条再归并」的规则是逐字复制粘贴的,
+        加第三层时已经漏改过一处。归并规则只写一份。
+
+        每层各取 k 条,所以总数最多 3k;要不要截断由调用方决定:
+        `retrieve_for_request` 给 planner 用,不截 —— 多几条参考资料没有坏处;
+        `retrieve_merged` 给调试台,必须截到 k,否则接口返回的条数
+        是调用方要求的三倍。
+        """
+        hits: list[KnowledgeHit] = []
+        for ns in self.ALL_NAMESPACES:
+            hits.extend(self.retrieve(query, ns, k))
+        hits.sort(key=lambda h: h.score, reverse=True)
+        return hits
+
+    def retrieve_for_request(self, request: Any, top_k: int | None = None) -> list[KnowledgeHit]:
+        """三层一起检索,按分数归并。
+
+        三层用**同一个 embedder、同一个度量(COSINE)**,所以分数**可以直接比**。
+        这点值得写清楚:如果各层用了不同的 embedding 模型,分数就不可比,
         归并就会变成"哪层分数虚高哪层霸榜"。
         """
         k = int(top_k or self.settings.rag_top_k)
         query = build_retrieval_query(request)
-        hits = self.retrieve(query, self.NAMESPACE_GUIDES, k) + self.retrieve(
-            query, self.NAMESPACE_POI, k
-        )
-        hits.sort(key=lambda h: h.score, reverse=True)
-        return hits
+        return self._retrieve_all_layers(query, k)
 
     def retrieve_merged(self, query: str, top_k: int | None = None) -> list[KnowledgeHit]:
-        """两层一起检索,归并后返回**最多 top_k 条**。
+        """三层一起检索,归并后返回**最多 top_k 条**。
 
         与 `retrieve_for_request` 的区别:那个接受 TripRequest、用
         `build_retrieval_query()` 拼 query(给 planner 用);这个直接接受一个字符串
@@ -623,15 +677,10 @@ class KnowledgeService:
         另写一份迟早会漂移,那时候「命令行搜得到、界面搜不到」就说不清是谁的错了。
 
         ⚠️ `top_k` 的语义是「**返回**多少条」,不是「每层取多少条」。
-        两层各自取 k 条再归并,总数最多 2k —— 必须截断,否则接口返回的条数
-        是调用方要求的两倍(检索调试台传 4 会拿到 8 条)。
+        三层各自取 k 条再归并,必须截断到 k —— 详见 `_retrieve_all_layers`。
         """
         k = int(top_k or self.settings.rag_top_k)
-        hits = self.retrieve(query, self.NAMESPACE_GUIDES, k) + self.retrieve(
-            query, self.NAMESPACE_POI, k
-        )
-        hits.sort(key=lambda h: h.score, reverse=True)
-        return hits[:k]
+        return self._retrieve_all_layers(query, k)[:k]
 
     def build_context(self, request: Any, top_k: int | None = None) -> str:
         """给 planner 用的、可直接拼进 prompt 的引用块。检索不到时返回空串。"""
@@ -722,8 +771,8 @@ class KnowledgeService:
         """
         vectors: list[list[float]] = []
         total = len(texts)
-        for i in range(0, total, _EMBED_BATCH):
-            batch = texts[i : i + _EMBED_BATCH]
+        for i in range(0, total, EMBED_BATCH):
+            batch = texts[i : i + EMBED_BATCH]
             vectors.extend(self.encode(batch))
             if progress_cb is not None:
                 progress_cb(len(vectors), total)
@@ -843,6 +892,76 @@ class KnowledgeService:
             "files": per_file,
         }
 
+    # ---------------- 用户上传的攻略 ----------------
+
+    def ingest_uploaded_doc(
+        self,
+        *,
+        doc_id: str,
+        title: str,
+        chunks: list[tuple[str, str]],
+        progress_cb: Any = None,
+    ) -> dict:
+        """把一篇用户上传的攻略灌进 `uploaded` 层。
+
+        与内置攻略分开灌(而不是复用 `ingest_city_guides`)的原因:
+        内置攻略是「全量重灌」语义 —— 遍历目录、把整个 collection 重建;
+        上传文档是「单篇增量」语义 —— 只写这一篇、删除时只删这一篇。
+        两种生命周期硬塞进一个方法,迟早会互相踩。
+
+        chunk 主键 `upload:{doc_id}:{idx}`:
+        doc_id 由正文哈希得来,所以同一份内容重传时 id 完全一致,
+        upsert 直接覆盖 —— 这就是为什么重复上传不会在库里越堆越多。
+        """
+        store = self.store(self.NAMESPACE_UPLOAD)
+        store.ensure_collection()
+
+        texts: list[str] = []
+        metas: list[dict] = []
+        for idx, (heading_path, chunk) in enumerate(chunks):
+            texts.append(fit_utf8(chunk, _MAX_TEXT_BYTES))
+            metas.append({"heading_path": heading_path, "idx": idx})
+
+        if not texts:
+            return {"namespace": self.NAMESPACE_UPLOAD, "count": 0, "chunk_ids": []}
+
+        vectors = self._embed_in_batches(texts, progress_cb=progress_cb)
+        rows = [
+            {
+                "id": f"upload:{doc_id}:{meta['idx']}",
+                "vector": vec,
+                "text": txt,
+                # source 存的是**攻略标题**而不是文件名 ——
+                # 行程详情页展示出处时,用户要认的是「成都三日游避坑」,
+                # 不是「download(3).md」。
+                "source": title,
+                "heading_path": meta["heading_path"],
+            }
+            for vec, txt, meta in zip(vectors, texts, metas)
+        ]
+        store.upsert(rows)
+        store.flush()
+
+        chunk_ids = [r["id"] for r in rows]
+        return {
+            "namespace": self.NAMESPACE_UPLOAD,
+            "collection": store.collection,
+            "count": len(rows),
+            "chunk_ids": chunk_ids,
+        }
+
+    def delete_uploaded_doc(self, chunk_ids: list[str]) -> int:
+        """把一篇上传文档从 Milvus 里删掉。
+
+        chunk_ids 来自 SQLite 里 `knowledge_docs.chunk_ids` ——
+        入库时记录了写了哪些,删除时就删哪些。
+        **先删这里、再删 SQLite 记录**:反过来一旦这里失败,
+        库里就剩下一批没有任何记录指向的孤儿块。
+        """
+        if not chunk_ids:
+            return 0
+        return self.store(self.NAMESPACE_UPLOAD).delete(chunk_ids)
+
     # ---------------- 状态 ----------------
 
     def available(self) -> tuple[bool, str]:
@@ -867,7 +986,9 @@ class KnowledgeService:
             "milvus_uri": self.settings.milvus_uri,
             "last_error": self.last_error,
         }
-        for ns in (self.NAMESPACE_POI, self.NAMESPACE_GUIDES):
+        # 按 ALL_NAMESPACES 遍历,而不是手写两行 —— 加第三层时漏改这里的
+        # 症状是:上传成功、状态接口里却没有 uploaded 这一项。
+        for ns in self.ALL_NAMESPACES:
             store = self.store(ns)
             try:
                 out[ns] = {

@@ -11,7 +11,11 @@ import type {
   KnowledgeIngestSource,
   KnowledgeIngestPreview,
   KnowledgeIngestTask,
-  KnowledgeSources
+  KnowledgeSources,
+  KnowledgeDocParse,
+  KnowledgeDocListResponse,
+  KnowledgeDocDetail,
+  KnowledgeRagToggle
 } from '@/types'
 
 /**
@@ -264,6 +268,111 @@ export async function getKnowledgeSources(): Promise<KnowledgeSources> {
     return response.data
   } catch (error: any) {
     throw new Error(error.response?.data?.detail || error.message || '读取数据源信息失败')
+  }
+}
+
+// ---- 上传攻略(用户文档) ----
+
+/**
+ * 解析一篇上传的攻略,**不入库** —— 返回切块预览,确认后调 ingestKnowledgeDoc。
+ *
+ * 用 fetch 而不是 apiClient:apiClient 的默认头是 `application/json`,
+ * 而这个请求的 body 是 FormData,Content-Type 必须由浏览器自己算 boundary。
+ * 与其依赖 axios 对「FormData + 预设 JSON 头」的推导,不如绕开它 ——
+ * 少一个隐式行为,就少一类查不到原因的 422。
+ */
+export async function parseKnowledgeDoc(payload: {
+  file?: File
+  text?: string
+  title?: string
+}): Promise<KnowledgeDocParse> {
+  const form = new FormData()
+  if (payload.file) form.append('file', payload.file)
+  if (payload.text) form.append('text', payload.text)
+  if (payload.title) form.append('title', payload.title)
+
+  const response = await fetch(`${API_BASE_URL}/api/knowledge/docs/parse`, {
+    method: 'POST',
+    body: form
+  })
+  const data = await response.json().catch(() => null)
+  if (!response.ok) {
+    // 后端对"文件不适合入库"这类问题统一回 422 + 一句能照做的话
+    throw new Error(data?.detail || `解析失败(HTTP ${response.status})`)
+  }
+  return data as KnowledgeDocParse
+}
+
+/** 入库一篇已解析的攻略。202 + task_id,用 getKnowledgeIngestTask 轮询进度 */
+export async function ingestKnowledgeDoc(docId: string): Promise<KnowledgeIngestTask> {
+  try {
+    const response = await apiClient.post<KnowledgeIngestTask>(
+      `/api/knowledge/docs/${encodeURIComponent(docId)}/ingest`,
+      {},
+      { timeout: 30000 }
+    )
+    return response.data
+  } catch (error: any) {
+    throw new Error(error.response?.data?.detail || error.message || '提交入库任务失败')
+  }
+}
+
+/** 上传攻略列表 */
+export async function listKnowledgeDocs(): Promise<KnowledgeDocListResponse> {
+  try {
+    const response = await apiClient.get<KnowledgeDocListResponse>('/api/knowledge/docs', {
+      timeout: 20000
+    })
+    return response.data
+  } catch (error: any) {
+    throw new Error(error.response?.data?.detail || error.message || '读取攻略列表失败')
+  }
+}
+
+/** 单篇详情(含分块预览)。用于「查看来源」 */
+export async function getKnowledgeDoc(docId: string): Promise<KnowledgeDocDetail> {
+  try {
+    const response = await apiClient.get<KnowledgeDocDetail>(
+      `/api/knowledge/docs/${encodeURIComponent(docId)}`,
+      { timeout: 20000 }
+    )
+    return response.data
+  } catch (error: any) {
+    if (error.response?.status === 404) {
+      throw new Error('这篇攻略不存在(可能已被删除)')
+    }
+    throw new Error(error.response?.data?.detail || error.message || '读取攻略详情失败')
+  }
+}
+
+/**
+ * 删除一篇上传攻略。后端会先删向量库里的块、再删记录 ——
+ * 顺序反过来会留下检索得到却无记录的孤儿块。
+ */
+export async function deleteKnowledgeDoc(
+  docId: string
+): Promise<{ success: boolean; message: string; deleted_chunks: number }> {
+  try {
+    const response = await apiClient.delete(`/api/knowledge/docs/${encodeURIComponent(docId)}`, {
+      timeout: 60000
+    })
+    return response.data
+  } catch (error: any) {
+    throw new Error(error.response?.data?.detail || error.message || '删除失败')
+  }
+}
+
+/** 运行时开关知识库。只影响当前进程,重启恢复 .env 的值(评测基线不动) */
+export async function toggleKnowledgeRag(enabled: boolean): Promise<KnowledgeRagToggle> {
+  try {
+    const response = await apiClient.post<KnowledgeRagToggle>(
+      '/api/knowledge/rag-toggle',
+      { enabled },
+      { timeout: 15000 }
+    )
+    return response.data
+  } catch (error: any) {
+    throw new Error(error.response?.data?.detail || error.message || '切换失败')
   }
 }
 

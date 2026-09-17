@@ -14,11 +14,18 @@ const MAX_POLL_FAILURES = 3;
  * 后端把灌库做成了长任务（1750 条要 55 批 embedding 请求，分钟级），
  * 所以这里必须轮询 —— 不能用一次同步请求等它跑完。
  *
+ * `submitFn` 默认是内置库的灌库接口;上传攻略走的是另一个接口
+ * （POST /knowledge/docs/{id}/ingest），但**任务结构与轮询方式完全一致** ——
+ * 传一个自己的提交函数进来即可复用,不必为它再写一套轮询。
+ *
  * ⚠️ 页面刷新会失去 task_id，此时后端任务仍在继续，前端只是不再跟踪。
  * 这是可接受的取舍：与其做一套任务列表恢复机制，不如在界面上说清楚
  * 「刷新后请稍等片刻再点刷新计数」。硬要恢复跟踪反而容易显示过期状态。
  */
-export function useIngestTask(onFinished?: () => void) {
+export function useIngestTask(
+  onFinished?: () => void,
+  submitFn: (source: KnowledgeIngestSource, recreate: boolean) => Promise<KnowledgeIngestTask> = startKnowledgeIngest
+) {
   const task = ref<KnowledgeIngestTask | null>(null);
   const submitting = ref(false);
   const polling = ref(false);
@@ -86,7 +93,7 @@ export function useIngestTask(onFinished?: () => void) {
     submitting.value = true;
     error.value = '';
     try {
-      const created = await startKnowledgeIngest(source, recreate);
+      const created = await submitFn(source, recreate);
       task.value = created;
       failures = 0;
       startPolling();

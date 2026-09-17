@@ -165,9 +165,12 @@ export interface PlanDetailResponse {
 // ============ 知识库(RAG) ============
 // 契约对应 backend/app/api/routes/knowledge.py
 
-export type KnowledgeNamespace = 'poi_facts' | 'city_guides'
+export type KnowledgeNamespace = 'poi_facts' | 'city_guides' | 'uploaded'
 export type KnowledgeNamespaceFilter = KnowledgeNamespace | 'all'
 export type KnowledgeIngestSource = 'frozen' | 'guides' | 'all'
+
+/** 上传文档的来源。图片刻意不支持 —— 原因见后端 doc_parser.py 顶部注释 */
+export type KnowledgeDocOrigin = 'md' | 'txt' | 'pdf' | 'paste'
 
 /** 一条检索命中。score 是 COSINE 相似度,值域 [-1,1] */
 export interface KnowledgeHit {
@@ -188,8 +191,13 @@ export interface KnowledgeNamespaceStat {
 
 export interface KnowledgeStatus {
   success: boolean
-  /** 生成行程时是否注入知识库(= 后端 .env 的 ENABLE_RAG)。默认 false */
+  /**
+   * 生成行程时是否注入知识库。
+   * 注意它与 enabled_source 搭配着读:runtime 来源的开启**重启即失效**。
+   */
   enabled: boolean
+  /** enabled 的来源:'env' = .env 基线;'runtime' = 业务流程(上传攻略)临时打开 */
+  enabled_source: 'env' | 'runtime'
   /** 知识库本身能不能用(embedding 与 Milvus 都通) */
   available: boolean
   /** available 的原因。不可用时原样展示给用户 —— 这是排错的唯一线索 */
@@ -201,6 +209,77 @@ export interface KnowledgeStatus {
   collections: Record<string, string>
   poi_facts?: KnowledgeNamespaceStat | null
   city_guides?: KnowledgeNamespaceStat | null
+  /** 用户上传攻略那一层 */
+  uploaded?: KnowledgeNamespaceStat | null
+  /** 上传文档的概览(各状态几份、共多少块) */
+  docs?: KnowledgeDocsSummary | null
+}
+
+// ---- 上传攻略(用户文档) ----
+
+export type KnowledgeDocStatus = 'pending' | 'ingested' | 'failed'
+
+export interface KnowledgeDocsSummary {
+  docs: number
+  chunks: number
+  ingested: { docs: number; chunks: number }
+  pending: { docs: number; chunks: number }
+  failed: { docs: number; chunks: number }
+}
+
+export interface KnowledgeDocSummary {
+  id: string
+  title: string
+  origin: KnowledgeDocOrigin
+  char_count: number
+  chunk_count: number
+  status: KnowledgeDocStatus
+  error: string | null
+  created_at: string
+  ingested_at: string | null
+}
+
+export interface KnowledgeDocChunkPreview {
+  idx: number
+  heading_path: string
+  chars: number
+  snippet: string
+}
+
+/** 解析结果(入库前预览)。后端这一步**不写向量库** */
+export interface KnowledgeDocParse {
+  success: boolean
+  doc_id: string
+  title: string
+  origin: KnowledgeDocOrigin
+  char_count: number
+  chunk_count: number
+  /** 预计要发几次 embedding 请求 —— 让用户对开销有数 */
+  embed_requests: number
+  /** 同一份内容之前已经传过。不拦截,但必须说出来 */
+  duplicate: boolean
+  existing_status: KnowledgeDocStatus | null
+  warnings: string[]
+  preview: KnowledgeDocChunkPreview[]
+}
+
+export interface KnowledgeDocListResponse {
+  success: boolean
+  docs: KnowledgeDocSummary[]
+  summary: KnowledgeDocsSummary
+}
+
+export interface KnowledgeDocDetail {
+  success: boolean
+  doc: KnowledgeDocSummary & { content_hash?: string }
+  chunks: KnowledgeDocChunkPreview[]
+}
+
+export interface KnowledgeRagToggle {
+  success: boolean
+  enabled: boolean
+  enabled_source: 'env' | 'runtime'
+  message: string
 }
 
 export interface KnowledgeSearchRequest {

@@ -8,7 +8,7 @@ from ..services.llm_service import get_llm
 from ..services.knowledge_service import format_context, get_knowledge_service
 from ..services.mcp_launcher import resolve_uvx_command
 from ..models.schemas import TripRequest, TripPlan
-from ..config import get_settings
+from ..config import get_settings, rag_enabled
 from ..observability import NullObserver
 from .fallback import build_empty_plan
 
@@ -357,8 +357,13 @@ class MultiAgentTripPlanner:
         """RAG 开关。配置里默认关 —— 这样「加了 RAG」和「没加」两组数字
         可以用同一份代码跑出来,而不是靠改代码前后对比(那种对比不可信:
         两次跑的代码都不一样了,差异未必来自 RAG)。
+
+        读 `rag_enabled()` 而不是 `settings.enable_rag`:
+        后者看不到业务流程设的运行时覆盖 —— 用户上传攻略时会自动打开开关,
+        直接读 settings 的话,界面上明明显示"已开启",
+        生成行程时却没用知识库,而且没有任何报错。这种静默不一致最难查。
         """
-        return bool(getattr(get_settings(), "enable_rag", False))
+        return bool(rag_enabled())
 
     def _retrieve_knowledge(
         self,

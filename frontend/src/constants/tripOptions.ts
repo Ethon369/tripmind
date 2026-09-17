@@ -87,6 +87,9 @@ export function mealLabelOf(type: string): string {
 export const KNOWLEDGE_NAMESPACE_MAP: Record<string, { text: string; color: string }> = {
   poi_facts: { text: 'POI 事实', color: 'default' },
   city_guides: { text: '城市攻略', color: 'purple' },
+  // 用户上传的那一层。行程页的出处卡片也会用到这个映射 ——
+  // 不加的话,上传内容被引用时会显示成原始的 'uploaded'。
+  uploaded: { text: '你上传的攻略', color: 'blue' },
 };
 
 export function knowledgeNamespaceOf(ns: string): { text: string; color: string } {

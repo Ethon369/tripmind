@@ -34,15 +34,17 @@ import uuid
 from datetime import datetime
 from typing import Any, Literal, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 
-from ...config import get_settings
-from ...services.knowledge_service import get_knowledge_service
+from ...config import get_settings, rag_state, set_rag_enabled
+from ...services.doc_parser import ParseError, chunk_document, parse_file, parse_paste
+from ...services.knowledge_service import EMBED_BATCH, get_knowledge_service
+from ...store.doc_store import DocStore
 
 router = APIRouter(prefix="/knowledge", tags=["知识库"])
 
-NamespaceFilter = Literal["all", "poi_facts", "city_guides"]
+NamespaceFilter = Literal["all", "poi_facts", "city_guides", "uploaded"]
 IngestSource = Literal["frozen", "guides", "all"]
 
 # ===========================================================================
@@ -60,11 +62,14 @@ class KnowledgeNamespaceStat(BaseModel):
 class KnowledgeStatusResponse(BaseModel):
     success: bool
     # enabled 与 available 是**两件不同的事**,刻意分开:
-    #   enabled   = 后端 .env 的 ENABLE_RAG,决定「生成行程时要不要注入知识库」
+    #   enabled   = 生成行程时注入不注入知识库(.env 基线 或 业务流程的运行时覆盖)
     #   available = embedding 与 Milvus 是否都能用,决定「知识库能不能查/能不能灌」
     # 现状是用户灌完库、检索也通,但 ENABLE_RAG 默认 false,生成时完全不用它 ——
     # 而界面上无从得知。这一对字段就是给界面把这个状态摊开用的。
     enabled: bool
+    # 'env' = 来自 .env(评测基线);'runtime' = 业务流程(上传攻略)临时打开的。
+    # 区分它是因为:运行时开启**重启即失效**,界面要提示"这不是永久的"。
+    enabled_source: str = "env"
     available: bool
     reason: str
     milvus_uri: str
@@ -74,6 +79,9 @@ class KnowledgeStatusResponse(BaseModel):
     collections: dict[str, str]
     poi_facts: Optional[KnowledgeNamespaceStat] = None
     city_guides: Optional[KnowledgeNamespaceStat] = None
+    uploaded: Optional[KnowledgeNamespaceStat] = None
+    # 上传文档的概览(各状态几份、共多少块)。知识库页用它渲染"我上传的攻略"。
+    docs: Optional[dict[str, Any]] = None
 
 
 class SearchRequest(BaseModel):
@@ -141,6 +149,83 @@ class SourcesResponse(BaseModel):
     success: bool
     poi_inventory: dict[str, Any]
     city_guides: dict[str, Any]
+
+
+# ---- 上传攻略（用户文档） ----
+
+
+class DocChunkPreview(BaseModel):
+    idx: int
+    heading_path: str
+    chars: int
+    snippet: str
+
+
+class DocParseResponse(BaseModel):
+    """解析结果 + 入库前预览。
+
+    解析与入库**分成两步**,是刻意保留原「预览 → 灌库」的设计:
+    入库要真金白银调 embedding,而且一旦切坏了,坏数据就在库里了 ——
+    让用户先看到"这篇会切成几块、每块讲什么",再决定要不要入库。
+    对 PDF 这一步尤其重要:没有文字层的文件在这一步就会被拦下来,
+    不会等到生成行程时才发现检索全是空的。
+    """
+
+    success: bool
+    doc_id: str
+    title: str
+    origin: str
+    char_count: int
+    chunk_count: int
+    # 预估要发的 embedding 请求次数(不是条数)。用户应当知道自己花了多少。
+    embed_requests: int
+    # 同一份内容之前已经传过。**不拦着**,但要说出来 ——
+    # 否则库里会堆重复内容,检索返回的几条全是同一段话。
+    duplicate: bool = False
+    existing_status: Optional[str] = None
+    warnings: list[str] = []
+    preview: list[DocChunkPreview] = []
+
+
+class DocSummary(BaseModel):
+    id: str
+    title: str
+    origin: str
+    char_count: int
+    chunk_count: int
+    status: str
+    error: Optional[str] = None
+    created_at: str
+    ingested_at: Optional[str] = None
+
+
+class DocListResponse(BaseModel):
+    success: bool
+    docs: list[DocSummary] = []
+    summary: dict[str, Any] = {}
+
+
+class DocDetailResponse(BaseModel):
+    success: bool
+    doc: dict[str, Any]
+    chunks: list[DocChunkPreview] = []
+
+
+class DocDeleteResponse(BaseModel):
+    success: bool
+    message: str
+    deleted_chunks: int
+
+
+class RagToggleRequest(BaseModel):
+    enabled: bool
+
+
+class RagToggleResponse(BaseModel):
+    success: bool
+    enabled: bool
+    enabled_source: str
+    message: str
 
 
 # ===========================================================================
@@ -224,12 +309,14 @@ def _public_task(task: dict) -> dict:
 
 def _collect_status(service, with_counts: bool) -> dict:
     settings = get_settings()
-    enabled = bool(getattr(settings, "enable_rag", False))
+    # 读 rag_state() 而不是 settings.enable_rag:后者看不到业务流程的运行时覆盖
+    state = rag_state()
     available, reason = service.available()
 
     payload: dict[str, Any] = {
         "success": True,
-        "enabled": enabled,
+        "enabled": state["enabled"],
+        "enabled_source": state["source"],
         "available": available,
         "reason": reason,
         "milvus_uri": settings.milvus_uri,
@@ -239,14 +326,29 @@ def _collect_status(service, with_counts: bool) -> dict:
         "collections": {
             "poi_facts": settings.rag_collection_poi,
             "city_guides": settings.rag_collection_guides,
+            "uploaded": settings.rag_collection_uploaded,
         },
     }
 
     if with_counts:
         stats = service.stats()
         payload["last_error"] = stats.get("last_error") or payload["last_error"]
-        for ns in ("poi_facts", "city_guides"):
+        # 按 service.ALL_NAMESPACES 遍历:加层时只改那里,这里才不会漏
+        for ns in service.ALL_NAMESPACES:
             payload[ns] = stats.get(ns) or {}
+
+        docs_summary = DocStore().summary()
+        payload["docs"] = docs_summary
+
+        # uploaded 层的计数**刻意用 SQLite 的,不用 Milvus 的 row_count**:
+        # Milvus 删除之后、compaction 之前,row_count 仍把已删的行算在内 ——
+        # 实测删完 3 块它还显示 3。而 SQLite 里记录的是「入库时写了哪些块」,
+        # 删除时同步清掉,是精确值。用户删完攻略看到计数不变,一定会以为没删掉。
+        payload["uploaded"] = {
+            "collection": settings.rag_collection_uploaded,
+            "exists": (stats.get("uploaded") or {}).get("exists"),
+            "count": docs_summary["ingested"]["chunks"],
+        }
 
     return payload
 
@@ -256,13 +358,14 @@ def _collect_status(service, with_counts: bool) -> dict:
     response_model=KnowledgeStatusResponse,
     summary="知识库状态",
     description=(
-        "返回 embedding/Milvus 可用性、ENABLE_RAG 开关、两层 collection 的计数。"
-        "with_counts=false 时跳过计数(更快),用于页面首屏。"
+        "返回 embedding/Milvus 可用性、ENABLE_RAG 开关、三层 collection 的计数,"
+        "以及上传文档的概览。with_counts=false 时跳过计数(更快),用于页面首屏。"
     ),
 )
 def knowledge_status(with_counts: bool = True):
     service = get_knowledge_service()
     settings = get_settings()
+    state = rag_state()
     try:
         # 计数要连 Milvus,给它一个上限;超时也不能让页面卡住
         return _collect_status(service, with_counts)
@@ -271,7 +374,8 @@ def knowledge_status(with_counts: bool = True):
         # 连它都返回 500,前端就只能显示「加载失败」,反而看不到真正的原因。
         return KnowledgeStatusResponse(
             success=True,
-            enabled=bool(getattr(settings, "enable_rag", False)),
+            enabled=state["enabled"],
+            enabled_source=state["source"],
             available=False,
             reason=f"状态检查超时或失败 — {type(exc).__name__}: {exc}",
             milvus_uri=settings.milvus_uri,
@@ -281,6 +385,7 @@ def knowledge_status(with_counts: bool = True):
             collections={
                 "poi_facts": settings.rag_collection_poi,
                 "city_guides": settings.rag_collection_guides,
+                "uploaded": settings.rag_collection_uploaded,
             },
         )
 
@@ -294,7 +399,7 @@ def knowledge_status(with_counts: bool = True):
     "/search",
     response_model=SearchResponse,
     summary="检索知识库",
-    description="按 query 检索指定层;namespace=all 时两层归并后按分数降序",
+    description="按 query 检索指定层;namespace=all 时三层归并后按分数降序",
 )
 def knowledge_search(body: SearchRequest):
     query = (body.query or "").strip()
@@ -321,9 +426,11 @@ def knowledge_search(body: SearchRequest):
 
     elapsed_ms = int((time.perf_counter() - t0) * 1000)
 
-    # 两层各自的条数,供前端区分「库是空的」和「确实没命中」
+    # 各层的条数,供前端区分「库是空的」和「确实没命中」。
+    # 遍历 ALL_NAMESPACES 而不是手写 —— 加层时漏改这里的症状是:
+    # 检索能搜到上传的内容,但计数里永远没有 uploaded 这一项。
     namespace_counts: dict[str, int] = {}
-    for ns in ("poi_facts", "city_guides"):
+    for ns in service.ALL_NAMESPACES:
         try:
             namespace_counts[ns] = service.store(ns).count()
         except Exception:
@@ -584,4 +691,362 @@ def knowledge_sources():
         success=True,
         poi_inventory=service.preview_poi_facts(),
         city_guides=service.preview_city_guides(),
+    )
+
+
+# ===========================================================================
+# 7. 上传攻略（用户文档）
+# ===========================================================================
+#
+# 与上面「灌库」的区别,一句话:灌库是**全量重灌**(遍历目录、可重建 collection),
+# 这里是**单篇增量**(只写这一篇、删除时只删这一篇)。
+# 两种生命周期塞进同一个函数里,参数和分支会越来越多,所以分开写。
+#
+# 流程刻意拆成 parse → ingest 两步:
+#   parse   解析 + 切块 + 去重检查,把结果写进 SQLite(status='pending'),**不碰 Milvus**
+#   ingest  真正调 embedding 写进 Milvus(异步任务,前端轮询进度)
+#
+# 中间这一步是给用户看的,也是质量的把关点:
+#   - PDF 没有文字层,在这里就会被拦下(而不是等到生成行程时才发现检索是空的)
+#   - 入库前先告诉用户「这篇会切成 12 块、发 1 次 embedding 请求」,花的钱心里有数
+
+_doc_store: DocStore | None = None
+_DOC_STORE_LOCK = threading.Lock()
+
+
+def _get_doc_store() -> DocStore:
+    global _doc_store
+    if _doc_store is None:
+        with _DOC_STORE_LOCK:
+            if _doc_store is None:
+                _doc_store = DocStore()
+    return _doc_store
+
+
+def _doc_chunk_previews(doc: dict[str, Any]) -> list[DocChunkPreview]:
+    """把一篇文档切成预览块。切块逻辑与入库时**共用同一份** ——
+    预览里说"12 块",入库就必须是 12 块;另写一份迟早对不上。"""
+    chunks = chunk_document(doc["content"], source=doc["title"])
+    return [
+        DocChunkPreview(idx=i, heading_path=h, chars=len(c), snippet=c[:160])
+        for i, (h, c) in enumerate(chunks)
+    ]
+
+
+@router.post(
+    "/docs/parse",
+    response_model=DocParseResponse,
+    summary="解析一篇上传的攻略（不入库）",
+    description=(
+        "上传 Markdown / 纯文本 / PDF(需有文字层),或直接粘贴文字。"
+        "返回切块预览与预估 embedding 次数;确认后调 POST /docs/{id}/ingest 真正入库。"
+    ),
+)
+async def knowledge_doc_parse(
+    file: Optional[UploadFile] = File(default=None),
+    text: Optional[str] = Form(default=None),
+    title: str = Form(default=""),
+):
+    settings = get_settings()
+    max_bytes = int(getattr(settings, "max_upload_bytes", 5 * 1024 * 1024))
+
+    if file is not None:
+        data = await file.read()
+        if not data:
+            raise HTTPException(status_code=400, detail="上传的文件是空的。")
+        if len(data) > max_bytes:
+            raise HTTPException(
+                status_code=413,
+                detail=(
+                    f"文件 {len(data) / 1024 / 1024:.1f} MB,超过上限 "
+                    f"{max_bytes / 1024 / 1024:.0f} MB。攻略用不到这么大,"
+                    "多半是选错文件了。"
+                ),
+            )
+        try:
+            parsed = parse_file(file.filename or "", data)
+        except ParseError as exc:
+            # 422 而不是 500:文件内容不适合入库是**用户的可修复问题**,
+            # 前端要把它当普通提示展示,而不是当成服务端故障。
+            raise HTTPException(status_code=422, detail=str(exc))
+    elif text is not None:
+        # `text is not None` 而不是 `text.strip()`:只贴了空格也该收到
+        # 「粘贴的内容是空的」,而不是笼统的"请上传文件"。
+        try:
+            parsed = parse_paste(text, title)
+        except ParseError as exc:
+            raise HTTPException(status_code=422, detail=str(exc))
+    else:
+        raise HTTPException(status_code=400, detail="请上传文件,或在文本框里粘贴攻略内容。")
+
+    doc_store = _get_doc_store()
+    existing = doc_store.get(parsed.doc_id, with_content=False)
+
+    # **已存在的记录一律不覆盖** —— 这不是偷懒,是正确性问题:
+    # 同一份内容 → 同一个 doc_id → 同一批 chunk id。
+    # 如果这里把它重置回 pending 并清掉 chunk_ids,
+    # 那条记录就再也删不掉向量库里的块了(症状:删了,检索还能搜到)。
+    # 所以:没有就插一条 pending;有就保持原样,预览照样给用户看。
+    if existing is None:
+        doc_store.create_pending(
+            {
+                "id": parsed.doc_id,
+                "title": parsed.title,
+                "origin": parsed.origin,
+                "content": parsed.text,
+                "content_hash": parsed.content_hash,
+                "char_count": parsed.char_count,
+                "chunk_count": parsed.chunk_count,
+                "chunk_ids": [],
+            }
+        )
+
+    return DocParseResponse(
+        success=True,
+        doc_id=parsed.doc_id,
+        title=parsed.title,
+        origin=parsed.origin,
+        char_count=parsed.char_count,
+        chunk_count=parsed.chunk_count,
+        # 向上取整:哪怕只有 1 块也要发 1 次请求,不能显示成 0 次
+        embed_requests=-(-parsed.chunk_count // EMBED_BATCH),
+        duplicate=existing is not None,
+        existing_status=existing["status"] if existing else None,
+        warnings=parsed.warnings,
+        preview=_doc_chunk_previews(
+            {"content": parsed.text, "title": parsed.title}
+        ),
+    )
+
+
+def _run_doc_ingest(task_id: str, doc_id: str) -> None:
+    """后台线程体:把一篇已解析(pending)的文档灌进 Milvus。
+
+    任何异常都要落到任务状态**和**文档状态里 —— 只记任务的话,
+    用户刷新页面就看不到失败原因了。
+    """
+    service = get_knowledge_service()
+    doc_store = _get_doc_store()
+
+    def set_progress(processed: int, total: int) -> None:
+        with _TASKS_LOCK:
+            task = _TASKS.get(task_id)
+            if task:
+                task["processed"] = processed
+                task["total"] = total or task["total"]
+
+    try:
+        with _TASKS_LOCK:
+            _TASKS[task_id]["state"] = "running"
+
+        doc = doc_store.get(doc_id)
+        if doc is None:
+            raise RuntimeError(f"文档 {doc_id} 不存在（可能已被删除）")
+        if not (doc.get("content") or "").strip():
+            raise RuntimeError("文档内容为空,无法入库")
+
+        # 上传即开启。用户点「入库」这个动作本身就是在表达
+        # 「我想让这份攻略参与行程生成」—— 再让他去别处开一次开关,属于多余步骤。
+        # 只改运行时状态,不写回 .env:评测基线不受影响,重启即恢复。
+        rag = set_rag_enabled(True)
+
+        with _TASKS_LOCK:
+            _TASKS[task_id]["current"] = "uploaded"
+
+        # 入库前先确认环境可用 —— 否则会跑到一半才失败
+        ok, reason = service.available()
+        if not ok:
+            raise RuntimeError(f"环境不可用: {reason}")
+
+        chunks = chunk_document(doc["content"], source=doc["title"])
+        total = len(chunks)
+        with _TASKS_LOCK:
+            _TASKS[task_id]["total"] = total
+            _TASKS[task_id]["processed"] = 0
+
+        result = service.ingest_uploaded_doc(
+            doc_id=doc_id,
+            title=doc["title"],
+            chunks=chunks,
+            progress_cb=set_progress,
+        )
+        chunk_ids = result.get("chunk_ids") or []
+        doc_store.mark_ingested(doc_id, chunk_ids, len(chunk_ids))
+
+        with _TASKS_LOCK:
+            task = _TASKS[task_id]
+            task["state"] = "done"
+            task["results"] = [
+                {"namespace": result.get("namespace"), "count": result.get("count")}
+            ]
+            task["processed"] = total
+            task["current"] = None
+            task["finished_at"] = _now_iso()
+            task["message"] = (
+                f"入库完成,共 {len(chunk_ids)} 块。"
+                + ("已自动开启知识库（重启后恢复 .env 设置）。" if rag["source"] == "runtime" else "")
+            )
+
+    except Exception as exc:
+        import traceback
+
+        traceback.print_exc()
+        reason = f"{type(exc).__name__}: {exc}"
+        try:
+            doc_store.mark_failed(doc_id, reason)
+        except Exception:
+            pass
+        with _TASKS_LOCK:
+            task = _TASKS.get(task_id)
+            if task:
+                task["state"] = "error"
+                task["error"] = reason
+                task["current"] = None
+                task["finished_at"] = _now_iso()
+                task["message"] = "入库失败"
+
+
+@router.post(
+    "/docs/{doc_id}/ingest",
+    response_model=IngestTaskResponse,
+    status_code=202,
+    summary="入库一篇攻略（后台任务）",
+    description=(
+        "把 parse 过的文档写入向量库,返回 task_id 用 GET /knowledge/ingest/{task_id} 轮询。"
+        "成功后会自动开启 ENABLE_RAG(运行时覆盖,重启恢复)。"
+    ),
+)
+def knowledge_doc_ingest(doc_id: str):
+    global _RUNNING
+
+    doc_store = _get_doc_store()
+    doc = doc_store.get(doc_id, with_content=False)
+    if doc is None:
+        raise HTTPException(
+            status_code=404,
+            detail="这篇文档不存在（可能已被删除）。请重新上传。",
+        )
+
+    with _TASKS_LOCK:
+        # 与灌库共用同一把单飞锁:两者写的都是 Milvus,并发会互相干扰
+        if _RUNNING:
+            running = _TASKS.get(_RUNNING)
+            if running and running["state"] in ("pending", "running"):
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"已有知识库任务在进行中（{_RUNNING}），请等它结束后再提交。",
+                )
+
+        task_id = f"upl-{datetime.now():%Y%m%d-%H%M%S}-{uuid.uuid4().hex[:4]}"
+        _TASKS[task_id] = {
+            "task_id": task_id,
+            "state": "pending",
+            "source": f"uploaded:{doc_id}",
+            "recreate": False,
+            "total": 0,
+            "processed": 0,
+            "current": None,
+            "started_at": _now_iso(),
+            "finished_at": None,
+            "results": [],
+            "error": None,
+            "message": "任务已创建",
+        }
+        _RUNNING = task_id
+        snapshot = _public_task(_TASKS[task_id])
+
+    thread = threading.Thread(
+        target=_run_doc_ingest,
+        args=(task_id, doc_id),
+        name=f"upload-{task_id}",
+        daemon=True,
+    )
+    thread.start()
+
+    return IngestTaskResponse(**snapshot)
+
+
+@router.get(
+    "/docs",
+    response_model=DocListResponse,
+    summary="列出上传的攻略",
+)
+def knowledge_doc_list(limit: int = 100):
+    doc_store = _get_doc_store()
+    return DocListResponse(
+        success=True,
+        docs=[DocSummary(**d) for d in doc_store.list_docs(limit)],
+        summary=doc_store.summary(),
+    )
+
+
+@router.get(
+    "/docs/{doc_id}",
+    response_model=DocDetailResponse,
+    summary="查看一篇上传攻略的分块",
+)
+def knowledge_doc_detail(doc_id: str):
+    doc_store = _get_doc_store()
+    doc = doc_store.get(doc_id)
+    if doc is None:
+        raise HTTPException(status_code=404, detail="这篇文档不存在。")
+
+    chunks = _doc_chunk_previews(doc)
+    # 全文不回传 —— 分块拼起来就是全文,没必要再传一份大的。
+    # 注意顺序:**先**切块、再丢掉 content,顺序反了切块拿到的就是空的。
+    doc.pop("content", None)
+    return DocDetailResponse(success=True, doc=doc, chunks=chunks)
+
+
+@router.delete(
+    "/docs/{doc_id}",
+    response_model=DocDeleteResponse,
+    summary="删除一篇上传攻略",
+    description="同时删除向量库里属于它的所有分块。先删向量库,再删记录。",
+)
+def knowledge_doc_delete(doc_id: str):
+    doc_store = _get_doc_store()
+    doc = doc_store.get(doc_id, with_content=False)
+    if doc is None:
+        raise HTTPException(status_code=404, detail="这篇文档不存在。")
+
+    service = get_knowledge_service()
+    try:
+        deleted = service.delete_uploaded_doc(doc.get("chunk_ids") or [])
+    except Exception as exc:
+        # 向量库删不掉时**不能**顺手把 SQLite 记录也删了 ——
+        # 那会留下一批没有任何记录指向的孤儿块,检索照样能搜到它,
+        # 用户看到的症状是"明明删掉了,行程里还在引用它"。
+        # 让记录留着,用户可以重试删除。
+        raise HTTPException(
+            status_code=502,
+            detail=f"从向量库删除失败,记录已保留,请稍后重试:{type(exc).__name__}: {exc}",
+        )
+
+    doc_store.delete(doc_id)
+    return DocDeleteResponse(
+        success=True,
+        message=f"已删除《{doc['title']}》",
+        deleted_chunks=deleted,
+    )
+
+
+@router.post(
+    "/rag-toggle",
+    response_model=RagToggleResponse,
+    summary="开启/关闭知识库（运行时）",
+    description=(
+        "运行时覆盖 ENABLE_RAG,不写回 .env —— 评测基线不受影响,重启后恢复 .env 的值。"
+    ),
+)
+def knowledge_rag_toggle(body: RagToggleRequest):
+    state = set_rag_enabled(body.enabled)
+    suffix = (
+        "（运行时覆盖,重启后恢复 .env 设置）" if state["source"] == "runtime" else "（与 .env 一致）"
+    )
+    return RagToggleResponse(
+        success=True,
+        enabled=state["enabled"],
+        enabled_source=state["source"],
+        message=("已开启" if state["enabled"] else "已关闭") + suffix,
     )

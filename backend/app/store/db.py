@@ -128,6 +128,36 @@ CREATE TABLE IF NOT EXISTS plan_knowledge (
     PRIMARY KEY (plan_id, idx)
 );
 CREATE INDEX IF NOT EXISTS idx_plan_knowledge_plan ON plan_knowledge(plan_id);
+
+-- 用户上传的攻略文档。
+--
+-- 存的是**归一化后的正文**,不是原文件 —— 这样「重新入库」不需要用户再传一次,
+-- 「查看来源」也能直接从库里读正文,不必碰文件系统。图片(OCR)刻意不支持,
+-- 原因见 app/services/doc_parser.py 顶部注释。
+--
+-- status 的取值:
+--   pending   解析完了、还没入库(Milvus 里还没有它)
+--   ingested  已写入 Milvus,检索能用
+--   failed    入库失败,error 里留原因(通常是 embedding 或 Milvus 不可用)
+--
+-- chunk_ids 存的是**这次写入 Milvus 的全部主键**(JSON 数组)。删除时按它精确删,
+-- 而不是靠前缀匹配 —— Milvus 的 like 前缀匹配在动态字段上行为有坑,
+-- 「自己记录自己写了什么,删的时候就删什么」是最可靠的。
+CREATE TABLE IF NOT EXISTS knowledge_docs (
+    id           TEXT PRIMARY KEY,         -- 正文 SHA-256 的前 12 位
+    title        TEXT NOT NULL,
+    origin       TEXT NOT NULL,            -- 'md' | 'txt' | 'pdf' | 'paste'
+    content      TEXT NOT NULL,            -- 归一化后的全文
+    content_hash TEXT NOT NULL,            -- SHA-256 全文,64 位
+    char_count   INTEGER NOT NULL DEFAULT 0,
+    chunk_count  INTEGER NOT NULL DEFAULT 0,
+    chunk_ids    TEXT NOT NULL DEFAULT '[]',
+    status       TEXT NOT NULL DEFAULT 'pending',
+    error        TEXT,
+    created_at   TEXT NOT NULL,
+    ingested_at  TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_knowledge_docs_status ON knowledge_docs(status);
 """
 
 
