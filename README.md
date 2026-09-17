@@ -17,6 +17,9 @@
 - **API**: FastAPI
 - **MCP工具**: amap-mcp-server (高德地图)
 - **LLM**: 支持多种LLM提供商(OpenAI, DeepSeek等)
+- **向量库**: Milvus(可选,用于 RAG;检索层自行实现)
+- **Embedding**: 硅基流动 `BAAI/bge-m3`(1024 维,REST 接口)
+- **持久化**: stdlib `sqlite3`(不引 ORM)
 
 ### 前端
 - **框架**: Vue 3 + TypeScript
@@ -50,6 +53,30 @@ HelloAgents 未内置多智能体编排能力——没有 `AgentTeam` / `Orchest
 - **提示词工程**: 5 套系统提示词分别约束各 Agent 的工具使用方式与输出格式;其中行程规划 Agent 的提示词内嵌完整 JSON Schema,用于约束输出结构
 - **输出解析与容错**: `_parse_response()` 处理 LLM 返回中 JSON 代码块、裸 JSON、格式异常三种情况
 - **数据契约**: 用 Pydantic 模型(`TripPlan` / `DayPlan` / `Attraction` / `Budget` 等)定义 Agent 之间传递的结构,把 LLM 的自由文本输出收敛为强类型对象
+
+### 为什么 RAG 的检索层也是自己写的
+
+框架的 RAG(`memory/rag/pipeline.py`)只支持 Qdrant:`create_rag_pipeline()` 的签名里没有
+`store` 参数,内部无条件构造 `QdrantVectorStore`,也没有抽象基类或注册表可以挂新后端
+(在框架里 `grep -ril milvus` 返回空)。
+
+本项目用 **Milvus**,所以检索层写在 `backend/app/services/knowledge_service.py`。
+分成**两层**,各答一个不同的问题:
+
+| namespace | 数据源 | 回答什么 |
+|---|---|---|
+| `poi_facts` | 冻结的高德 POI 库存(1750 条,**带真实坐标**) | 这城市有哪些**真实**景点、在哪 |
+| `city_guides` | 手写 markdown 攻略(每城一篇) | 怎么安排才合理(门票、预约、淡旺季、避坑) |
+
+第二层才是「为什么需要 RAG」的正当答案 —— 这些是**模型容易记错或过时**的知识
+(门票涨价、闭馆日、预约规则)。第一层补的是另一个缺口:高德的
+`maps_text_search` **只返回名字和地址、不返回坐标**,模型手上没有坐标就容易编。
+
+检索结果**带出处**(`[1] 来源: 北京.md > 门票与预约`)拼进规划 Agent 的 prompt,
+而不是挂成一个工具 —— 这样检索时机确定、不占用模型的工具调用预算,而且
+query / 分数 / 来源都能记进运行日志,出问题时能分清是「检索坏了」还是「模型没用好」。
+
+`ENABLE_RAG` 关掉时,prompt 与加 RAG 之前**逐字相同**,所以开/关两组数字可以直接对比。
 
 ## 📁 项目结构
 
@@ -125,7 +152,7 @@ cp .env.example .env
 #
 # 可留空:
 #   UNSPLASH_ACCESS_KEY / UNSPLASH_SECRET_KEY   留空只是景点没配图
-#   EMBED_* / QDRANT_*                          只有开 RAG(ENABLE_RAG)才用得上
+#   EMBED_* / MILVUS_*                          只有开 RAG(ENABLE_RAG)才用得上
 ```
 
 > `.env` 已在 `.gitignore` 中,不会被提交。
@@ -195,6 +222,58 @@ npm.cmd run dev        # PowerShell 执行策略会挡 npm.ps1
 
 前端发的是**相对路径**请求,由 vite proxy 转发到后端 —— 所以后端换端口
 只需要改 `frontend/vite.config.ts` 那一处。
+
+### RAG 知识库(可选,不装也能跑)
+
+默认 `ENABLE_RAG=false`,**不装 RAG 一切功能照常**。想用的话:
+
+**1. 起 Milvus**(需要 Docker Desktop 正在运行)
+
+```bash
+cd D:/devlop/Milvus && docker compose up -d
+# healthz 返回 200 才算好,首次启动要等 30~60 秒
+curl http://127.0.0.1:9091/healthz
+```
+
+> ⚠️ Milvus standalone 是三个容器(etcd + minio + milvus)。
+> 如果容器被重建过、报 `InvalidateCollectionMetaCache failed ... node not match`,
+> 执行 `docker compose down && docker compose up -d` 即可(数据在 bind mount 里,不会丢)。
+
+**2. 环境自检**
+
+```bash
+cd backend && ./venv/Scripts/python.exe scripts/check_rag_env.py
+```
+六项全绿才继续。**尤其是维度必须是 1024** —— 维度不对不会报错,只会让检索静默返回空。
+
+**3. 灌知识**
+
+```bash
+cd backend && ./venv/Scripts/python.exe scripts/ingest_knowledge.py --dry-run   # 先看多少条,不花钱
+cd backend && ./venv/Scripts/python.exe scripts/ingest_knowledge.py --source=all
+```
+
+⚠️ 灌库会调用 embedding 接口(**花你的额度**,1750+30 条约 ¥0.004)。
+重复执行是幂等的(用 POI id / 文件名+序号做主键,`upsert` 覆盖),改完攻略直接重跑。
+
+**4. 打开开关**
+
+```bash
+# backend/.env
+ENABLE_RAG=true
+```
+
+**5. 验证检索真的有效**
+
+```bash
+cd backend && ./venv/Scripts/python.exe scripts/ingest_knowledge.py --source=guides --query "紫禁城" --query "兵马俑"
+```
+
+「紫禁城」应该能搜到**故宫博物院**,「兵马俑」应该搜到**秦始皇帝陵博物院** ——
+这靠的是 POI 的别名,是高德数据里最容易被漏掉、又最影响检索效果的一块。
+
+> ⚠️ 每次要用 RAG 都得先确保 **Docker Desktop 开着 + Milvus 容器在跑**。
+> RAG 挂掉不会让行程生成失败(检索层会吞掉异常并跳过),只是少一段外部知识。
 
 ## 📝 使用指南
 

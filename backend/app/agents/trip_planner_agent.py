@@ -5,6 +5,7 @@ from typing import Dict, Any, List
 from hello_agents import SimpleAgent
 from hello_agents.tools import MCPTool
 from ..services.llm_service import get_llm
+from ..services.knowledge_service import format_context, get_knowledge_service
 from ..services.mcp_launcher import resolve_uvx_command
 from ..models.schemas import TripRequest, TripPlan
 from ..config import get_settings
@@ -285,10 +286,28 @@ class MultiAgentTripPlanner:
             obs.stage_response("hotels", hotel_response)
             print(f"酒店搜索结果: {hotel_response[:200]}...\n")
 
+            # 步骤3.5: 检索知识库(P7,可用 ENABLE_RAG 开关)
+            #
+            # 为什么在**这里**检索、而不是给 planner 挂一个 RAG 工具:
+            #   - 检索时机确定(每次必发生),不会被 planner 的 max_tool_iterations
+            #     预算挤掉 —— 挂成工具的话,模型可能这一轮忘了调
+            #   - query / 分数 / 来源都能记进 observer,出问题时一眼看出是
+            #     「检索坏了」还是「模型没用好」
+            #   - 检索是纯 Python,不占模型的推理轮次
+            knowledge_context = ""
+            if self._rag_enabled():
+                print("📚 步骤3.5: 检索知识库...")
+                obs.stage_start("retrieval")
+                knowledge_context = self._retrieve_knowledge(request, obs)
+                obs.stage_end("retrieval")
+
             # 步骤4: 行程规划Agent整合信息生成计划
             print("📋 步骤4: 生成行程计划...")
             obs.stage_start("planning")
-            planner_query = self._build_planner_query(request, attraction_response, weather_response, hotel_response)
+            planner_query = self._build_planner_query(
+                request, attraction_response, weather_response, hotel_response,
+                knowledge=knowledge_context,
+            )
             planner_response = self.planner_agent.run(planner_query)
             obs.stage_end("planning")
             obs.stage_response("planning", planner_response)
@@ -317,6 +336,46 @@ class MultiAgentTripPlanner:
             obs.run_end(trip_plan, ok=False, error=f"{type(e).__name__}: {e}")
             return trip_plan
     
+    def _rag_enabled(self) -> bool:
+        """RAG 开关。配置里默认关 —— 这样「加了 RAG」和「没加」两组数字
+        可以用同一份代码跑出来,而不是靠改代码前后对比(那种对比不可信:
+        两次跑的代码都不一样了,差异未必来自 RAG)。
+        """
+        return bool(getattr(get_settings(), "enable_rag", False))
+
+    def _retrieve_knowledge(self, request: TripRequest, obs: NullObserver) -> str:
+        """检索知识库并拼成 prompt 片段。**检索不到就返回空串。**
+
+        **失败绝不能让行程规划挂掉。** RAG 是增强,不是依赖 ——
+        Milvus 没起来、embedding 接口超时、collection 忘了灌,这些情况一律
+        返回空串,管线照常往下走。异常只在这里打印一行,不影响主流程。
+
+        这一层的 `KnowledgeService.retrieve()` 内部也已经吞了异常,
+        这里是第二道保险(比如 service 构造本身就出问题)。
+        """
+        try:
+            service = get_knowledge_service()
+            hits = service.retrieve_for_request(request)
+        except Exception as exc:
+            print(f"⚠️  知识库检索失败,本次跳过: {type(exc).__name__}: {exc}")
+            obs.stage_response("retrieval", f"(检索失败: {type(exc).__name__})")
+            return ""
+
+        if not hits:
+            print("📚 知识库没有检索到内容 —— 本次不带外部知识生成")
+            obs.stage_response("retrieval", "(空)")
+            return ""
+
+        print(f"📚 知识库检索到 {len(hits)} 条:")
+        for h in hits:
+            where = f"{h.source} > {h.heading_path}" if h.heading_path else h.source
+            print(f"     {h.score:.3f}  {where}")
+
+        context = format_context(hits)
+        # 记进 observer:出问题时能看出「检索到了什么」,而不是只看到最终行程
+        obs.stage_response("retrieval", context)
+        return context
+
     def _build_attraction_query(self, request: TripRequest) -> str:
         """构建景点搜索查询 - 直接包含工具调用"""
         keywords = []
@@ -330,8 +389,24 @@ class MultiAgentTripPlanner:
         query = f"请使用amap_maps_text_search工具搜索{request.city}的{keywords}相关景点。\n[TOOL_CALL:amap_maps_text_search:keywords={keywords},city={request.city}]"
         return query
 
-    def _build_planner_query(self, request: TripRequest, attractions: str, weather: str, hotels: str = "") -> str:
-        """构建行程规划查询"""
+    def _build_planner_query(self, request: TripRequest, attractions: str, weather: str,
+                             hotels: str = "", knowledge: str = "") -> str:
+        """构建行程规划查询
+
+        `knowledge` 是 RAG 检索到的引用块(带出处)。**为空时 prompt 与加 RAG
+        之前逐字相同** —— 这一点很重要:A/B 对比要测的是「RAG 带来的差异」,
+        如果关掉 RAG 时 prompt 里还留着一个空的知识库段落,prompt 长度和结构
+        就变了,两组数字的差异就说不清是 RAG 带来的还是段落带来的。
+        """
+        # 只在真的有内容时才加这一段。空段落会让模型以为"资料给过了但没看到",
+        # 而且会白白改变 prompt 的结构
+        knowledge_block = ""
+        if knowledge:
+            knowledge_block = (
+                "\n**外部知识库(检索得到,优先采用其中的门票价格、预约规则、"
+                f"开放时间、片区串联建议):**\n{knowledge}\n"
+            )
+
         query = f"""请根据以下信息生成{request.city}的{request.travel_days}天旅行计划:
 
 **基本信息:**
@@ -350,7 +425,7 @@ class MultiAgentTripPlanner:
 
 **酒店信息:**
 {hotels}
-
+{knowledge_block}
 **要求:**
 1. 每天安排2-3个景点
 2. 每天必须包含早中晚三餐

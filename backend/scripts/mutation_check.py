@@ -60,6 +60,7 @@ GROUNDING = BACKEND / "app" / "eval" / "metrics_grounding.py"
 PARSING = BACKEND / "app" / "services" / "amap_parsing.py"
 FALLBACK = BACKEND / "app" / "agents" / "fallback.py"
 LAUNCHER = BACKEND / "app" / "services" / "mcp_launcher.py"
+KNOWLEDGE = BACKEND / "app" / "services" / "knowledge_service.py"
 EVAL_REPORT = BACKEND / "app" / "eval" / "report.py"
 RUN_EVAL = BACKEND / "app" / "eval" / "run_eval.py"
 RECORDER = BACKEND / "scripts" / "recorder.py"
@@ -500,6 +501,90 @@ MUTATIONS: list[tuple[Path, str, str, str]] = [
         "        except Exception:  # noqa: BLE001\n            pass",  # noqa
         "调用异常被吞掉 —— 真实错误被当成「没结果」,排查方向全错",
     ),
+    # ---- knowledge_service.py(P7,RAG)----
+    (
+        KNOWLEDGE,
+        '    return raw[:max_bytes].decode("utf-8", errors="ignore")',
+        "    return text[:max_bytes]",
+        "fit_utf8 改按字符数截断 —— 中文一个 3 字节,Milvus 写入直接超限报错",
+    ),
+    (
+        KNOWLEDGE,
+        '    return raw[:max_bytes].decode("utf-8", errors="ignore")',
+        '    return raw[:max_bytes].decode("utf-8")',
+        "截断去掉 errors=ignore —— 切在汉字中间时抛 UnicodeDecodeError,「文本过长」变成写入失败",
+    ),
+    (
+        KNOWLEDGE,
+        "    if arr.ndim == 1:\n        arr = arr.reshape(1, -1)",
+        "    if arr.ndim == 1:\n        pass",
+        "normalize_vectors 不再升维 —— encode(单条) 的 1 维向量直接进 Milvus,报 ParamError,检索全挂",
+    ),
+    (
+        KNOWLEDGE,
+        "        if head and head not in seen:",
+        "        if head:",
+        "primary_types 不去重 —— 同一类别按并列路径重复计数,引用出处里出现「风景名胜 / 风景名胜」",
+    ),
+    (
+        KNOWLEDGE,
+        '        head = group.split(";")[0].strip()',
+        "        head = group.strip()",
+        "primary_types 取整个层级串 —— 类别变成一长串,且同一大类被拆成几十个「不同类别」",
+    ),
+    (
+        KNOWLEDGE,
+        "            while stack and stack[-1][0] >= level:",
+        "            while stack and stack[-1][0] > level:",
+        "标题栈出栈条件改错 —— 同级标题被当成子级,出处变成「北京 > 门票 > 交通」这种不存在的层级",
+    ),
+    (
+        KNOWLEDGE,
+        "        if not body:\n"
+        "            # 光有标题、没有正文的小节,索引进库也检索不出东西\n"
+        "            continue",
+        "        if not body:\n            pass",
+        "空小节不再跳过 —— 只有标题没正文的块也进库,白花 embedding 额度还检索不出东西",
+    ),
+    (
+        KNOWLEDGE,
+        '        out.append((path, f"{head}\\n{body}" if head else body))',
+        "        out.append((path, body))",
+        "分块文本丢掉标题 —— 向量只看到「门票 60 元」,不知道说的是哪个城市,检索命中率下降",
+    ),
+    (
+        KNOWLEDGE,
+        '    if isinstance(raw, str):\n        return [a.strip() for a in raw.split("|") if a.strip()]',
+        "    if False:\n        return []",
+        "别名归一化只认列表 —— 而实测有别名的那 240 条**全是字符串**,"
+        "守卫条件对恰好有数据的那批恒为假,别名一行都进不了库且不报错(真发生过)",
+    ),
+    (
+        KNOWLEDGE,
+        '    if isinstance(raw, (list, tuple, set)):',
+        '    if False:',
+        "别名归一化不认列表 —— 另一种形态的数据被丢掉",
+    ),
+    (
+        KNOWLEDGE,
+        '    if isinstance(loc, (list, tuple)) and len(loc) == 2:\n'
+        '        parts.append(f"坐标 {loc[0]},{loc[1]}")',
+        "    if isinstance(loc, (list, tuple)) and len(loc) >= 1:\n"
+        '        parts.append(f"坐标 {loc[0]},{loc[-1]}")',
+        "坐标只有一半时硬凑一个出来 —— 正是这个项目一直在修的那类「编造」",
+    ),
+    (
+        KNOWLEDGE,
+        '    if not hits:\n        return ""',
+        "    if not hits:\n        return _CONTEXT_HEADER",
+        "检索为空时仍返回表头 —— 一段「以下内容来自知识库」但底下什么都没有的废话被拼进 prompt",
+    ),
+    (
+        KNOWLEDGE,
+        "    if city:\n        parts.append(city)",
+        "    if city:\n        parts.append(f\"{city} {getattr(request, 'travel_days', '')}\")",
+        "检索查询里混进天数 —— 稀释语义,把查询向量推向无关区域(这是刻意排除的字段)",
+    ),
 ]
 
 
@@ -536,7 +621,7 @@ def main() -> int:
         path: _read(path)
         for path in {
             GEO, METRICS, GROUNDING, PARSING, FALLBACK,
-            LAUNCHER, EVAL_REPORT, RUN_EVAL, RECORDER,
+            LAUNCHER, EVAL_REPORT, RUN_EVAL, RECORDER, KNOWLEDGE,
         }
     }
     lines: list[str] = []

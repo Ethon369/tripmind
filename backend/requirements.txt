@@ -32,5 +32,12 @@ huggingface_hub>=0.25.0
 # 注意:不要加 torch / sentence-transformers —— Python 3.14 上
 # 没有预编译 wheel,Windows 下装必失败。本项目用硅基流动的
 # REST embedding 接口,只需要 requests(已随 hello-agents 装好)。
-qdrant-client>=1.9.0
+#
+# 用 pymilvus 而不是框架原生支持的 qdrant-client:
+# hello_agents 的 RAG 只支持 Qdrant(且 create_rag_pipeline 没有注入点),
+# 本机已有一套 Milvus standalone,所以检索层由
+# app/services/knowledge_service.py 自己写。详见该文件顶部注释。
+# 版本钉在 2.5.x —— 与本机 Milvus 服务端 2.5.14 对齐;
+# pymilvus 3.x 是给 Milvus 3.x 服务端用的,不要升。
+pymilvus>=2.5,<2.6
 markitdown>=0.0.1

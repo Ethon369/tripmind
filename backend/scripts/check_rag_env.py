@@ -53,23 +53,30 @@ def main() -> int:
         record("读取 app.config", False, f"{type(e).__name__}: {e}")
         return report()
 
-    # ---------- 1. Qdrant 连通性 ----------
-    print("\n[1/4] Qdrant 向量库")
+    # ---------- 1. Milvus 连通性 ----------
+    print("\n[1/4] Milvus 向量库")
     try:
         import requests
 
-        url = (settings.qdrant_url or "http://localhost:6333").rstrip("/")
-        r = requests.get(f"{url}/collections", timeout=5)
+        # Milvus 的 9091 端口有 healthz,比连 gRPC 更轻,失败了也不会挂住
+        url = (settings.milvus_uri or "http://localhost:19530").rstrip("/")
+        host = url.split("//")[-1].split(":")[0]
+        r = requests.get(f"http://{host}:9091/healthz", timeout=5)
         if r.status_code == 200:
-            cols = r.json().get("result", {}).get("collections", [])
-            record("Qdrant 可连接", True, f"{url}  ({len(cols)} 个 collection)")
+            # 健康检查过了再真连一次 pymilvus,并数一数 collection ——
+            # healthz 只能说明进程活着,不代表 gRPC 能连上
+            from pymilvus import MilvusClient
+
+            client = MilvusClient(uri=url)
+            cols = client.list_collections()
+            record("Milvus 可连接", True, f"{url}  ({len(cols)} 个 collection)")
         else:
-            record("Qdrant 可连接", False, f"HTTP {r.status_code}")
+            record("Milvus 可连接", False, f"healthz HTTP {r.status_code}")
     except Exception as e:
         record(
-            "Qdrant 可连接",
+            "Milvus 可连接",
             False,
-            f"{type(e).__name__} — 容器起了吗?试: docker ps",
+            f"{type(e).__name__} — 容器起了吗?试: cd D:/devlop/Milvus && docker compose up -d",
         )
 
     # ---------- 2. Embedding 后端 ----------

@@ -45,8 +45,14 @@ npm.cmd run dev        # 用 npm.cmd 不用 npm —— PowerShell 执行策略�
 ### 其他常用命令
 
 ```bash
-# RAG 环境自检(Qdrant 可连 / embedding 维度 1024 / markitdown 可导入)
+# RAG 环境自检(Milvus 可连 / embedding 维度 1024 / markitdown 可导入)
 cd backend && ./venv/Scripts/python.exe scripts/check_rag_env.py
+
+# RAG 灌库 —— ⚠️ 会调 embedding 接口(花额度,约 ¥0.004/轮)
+cd backend && ./venv/Scripts/python.exe scripts/ingest_knowledge.py --dry-run   # 先看多少条,不花钱
+cd backend && ./venv/Scripts/python.exe scripts/ingest_knowledge.py --source=all
+# 顺带做检索冒烟测试(可以指定查询)
+cd backend && ./venv/Scripts/python.exe scripts/ingest_knowledge.py --source=all --query "北京 历史文化"
 
 # 录制高德响应 —— 接地性指标的 ground truth(⚠️ 会调用高德 API,用你的 key)
 cd backend && ./venv/Scripts/python.exe scripts/recorder.py --dry-run   # 先看要发多少请求
@@ -64,6 +70,13 @@ cd backend && ./venv/Scripts/python.exe -m app.eval.run_eval --mode=record --tag
 cd backend && ./venv/Scripts/python.exe -m app.eval.run_eval --mode=record --tag=baseline            # 真跑(无 --force 会拒绝覆盖)
 # 出报告 —— 免费、不碰网络,想跑多少次跑多少次
 cd backend && ./venv/Scripts/python.exe -m app.eval.run_eval --mode=replay --tag=baseline
+
+# RAG 的 A/B 对比:同一个 tag 跑两遍,只有 --rag 不同(⚠️ 两遍都花钱)
+cd backend && ./venv/Scripts/python.exe -m app.eval.run_eval --mode=record --tag=rag-off --rag=off
+cd backend && ./venv/Scripts/python.exe -m app.eval.run_eval --mode=record --tag=rag-on  --rag=on
+cd backend && ./venv/Scripts/python.exe -m app.eval.run_eval --mode=replay --tag=rag-off  # 不花钱
+cd backend && ./venv/Scripts/python.exe -m app.eval.run_eval --mode=replay --tag=rag-on   # 不花钱
+# 然后 diff data/eval/rag-off.md data/eval/rag-on.md
 
 # 单元测试(首次先装测试依赖:./venv/Scripts/python.exe -m pip install -r requirements-dev.txt)
 cd backend && ./venv/Scripts/python.exe -m pytest tests/ -q
@@ -129,6 +142,7 @@ POST /api/trip/plan
 | `app/agents/fallback.py` | 降级行程:保留请求的结构,**一个内容都不编**。纯函数,单测覆盖(降级路径 baseline 触发不到,只能靠单测) |
 | `app/services/amap_parsing.py` | 高德返回值解析(剥 MCP 外壳、拆 `"经度,纬度"`)。纯函数,`recorder.py` 与 P6 共用 |
 | `app/services/mcp_launcher.py` | 拼启动高德 MCP 的命令,用绝对路径找 `uvx`。纯函数,两个 `MCPTool` 创建点共用 |
+| `app/services/knowledge_service.py` | RAG 双层知识库,**直接建在 Milvus 上**(框架不支持 Milvus)。分块/归一化/引用格式是纯函数,单测覆盖 |
 
 ### 评测为什么要「录制 / 回放」两层
 
@@ -160,6 +174,32 @@ baseline 里同一批名字:前者 **0.57**、后者 **0.98**。差值全部是�
 库存装不下"有名但没被关键词命中"的地方(国子监、798、上海中心大厦)。
 **只看 `poi_support_rate` 会把库存不全读成模型在编**,然后去修一个不存在的 bug。
 `scripts/audit_unmatched.py` 专门做这个对比。
+
+### RAG 是两层,而且**检索层是自己写的**
+
+| namespace | 数据源 | 回答什么 | 对指标的贡献 |
+|---|---|---|---|
+| `poi_facts` | 冻结的高德 POI 库存(1750 条,**带真实坐标**) | 这城市有哪些**真实**景点、在哪、什么类型 | `poi_exists_rate` / `coord_mae_km` |
+| `city_guides` | 手写 markdown 攻略(5 城 × 6 块) | 怎么安排才合理(门票、预约、淡旺季、避坑) | 文案质量 / `intraday_travel_km_p95` |
+
+**`city_guides` 才是「为什么要用 RAG」的正当答案**:这些是 LLM 会记错或过时的知识
+(门票涨价、闭馆日、预约规则)。`poi_facts` 单看有点同义反复(工具本来就能搜到 POI),
+但它补的是**高德搜索不给坐标**那个缺口 —— 见坑 #4。
+
+**为什么不用框架的 RAG**:`hello_agents` 的 RAG(`memory/rag/pipeline.py`,1100+ 行)
+**只支持 Qdrant**,`memory/storage/` 下只有 qdrant/neo4j/document 三个,
+`grep -ril milvus` 返回空;`create_rag_pipeline()` 的签名里**没有 `store` 参数**,
+内部无条件 `new QdrantVectorStore`,也没有 ABC 或注册表可以挂新后端。
+所以检索层写在 `app/services/knowledge_service.py` 里(约 470 行,线性的,好懂)。
+embedder 仍然复用框架的(`DashScopeEmbedding` → 硅基流动 REST,bge-m3,1024 维)。
+
+**注入方式:步骤 3.5 在 Python 里检索后拼进 planner 的 prompt**,不挂成工具。
+理由:时机确定(不会被 `max_tool_iterations` 挤掉)、query/分数/来源可记录、
+不占模型的推理轮次。
+
+⚠️ **开关关掉时 prompt 与加 RAG 之前逐字相同** —— `tests/test_planner_query.py`
+里有一条盯着这件事的测试。这条不测的话,A/B 两组数字的差异就说不清是 RAG
+带来的还是 prompt 结构变了带来的,**那种对比不如不做**。
 
 ### 前端的三种数据来源
 
@@ -352,6 +392,80 @@ cd backend && ./venv/Scripts/python.exe -c "from urllib.request import getproxie
 没有预编译 wheel,Windows 下装必失败。RAG 的 embedding 走硅基流动的 REST 接口
 (`BAAI/bge-m3`,1024 维)。这也是不引 ORM、用 stdlib `sqlite3` 的原因。
 
+### 11. 高德的 `alias` 字段**类型不一致** —— 守卫条件对"恰好有数据的那批"恒为假
+
+这是本项目里最阴的一个坑,踩过。
+
+同一个 `alias` 字段,有时是字符串、有时是列表。实测冻结库存 1750 条:
+
+```
+ 240 条  alias 是 **字符串**   "紫禁城" / "中国历史博物馆|北京历史博物馆"
+1510 条  alias 是 **空列表**   []
+```
+
+**有别名的那 240 条全部是字符串,而列表全部是空的。** 所以第一版写的
+
+```python
+if isinstance(aliases, (list, tuple)) and aliases:   # ← 对那 240 条恒为假
+```
+
+**一行都没生效过**,别名从来没进过库,而且**不报任何错**,检索结果只是悄悄变差。
+`scripts/ingest_knowledge.py --query "紫禁城"` 是唯一能看出问题的办法。
+
+修法是 `knowledge_service.normalize_aliases()`,统一按 `|` 拆成 `list[str]`。
+
+**但比这个 bug 本身更值得记住的是它怎么被发现的:第一版单测全绿。**
+因为测试里我手写的是 `["紫禁城"]`(**我以为**的形状),不是数据里真实的 `"紫禁城"`。
+测试验证的是我的假设,不是现实。
+
+所以现在 `tests/test_knowledge.py::TestAliasesAgainstRealData` 直接读
+`data/frozen/amap/poi_inventory.json`(**真实录制的数据**)反过来验:
+每一条有别名的 POI,它的别名都必须出现在 `poi_to_text()` 的输出里。
+这与坑 #7 的 `TestBboxAgainstRealData` 是同一个思路 —— **构造的输入只能验证
+"我以为的世界",只有真数据能验证"实际的世界"**。
+
+修复前后(能直接写进简历的对比):
+
+| 查询 | 修复前 | 修复后 |
+|---|---|---|
+| `紫禁城` | 完全搜不到故宫(第1名是"人民公园-紫藤架" 0.5288) | **故宫博物院 第1名 0.6356** |
+| `兵马俑` | 秦始皇帝陵博物院 只排第3(0.4696) | **第1名 0.5980** |
+
+### 12. 别拿第三方库的**导入副作用**当自己的配置来源
+
+`pymilvus/settings.py:6` 在 **import 时**调用 `load_dotenv()`(无参数),
+而 `find_dotenv()` 是**按 cwd** 找 `.env` 的。于是:
+
+- 在 `backend/` 下 `import pymilvus` → 顺手把 `.env` 灌进了 `os.environ`
+- 不 import pymilvus 时,`EMBED_API_KEY` 就是**空的**,
+  而 `get_text_embedder()` 会直接抛 `RuntimeError: 所有嵌入模型都不可用`
+
+**「embedder 能不能用」一度取决于哪个库先被 import。** 当时一个探针脚本能跑通
+纯属运气(它先 import 了 pymilvus),换成不 import 它的脚本就炸。
+同类问题:`app/config.py:11` 的 `load_dotenv()` 也是按 cwd 找的,
+从仓库根目录启动就找不到,配置全空**而且不报错**。
+
+对策:`knowledge_service` 里两件事都显式做了 ——
+`_ensure_env_loaded()` 用**绝对路径**读 `backend/.env`;
+embedder 用不带 fallback 的 `create_embedding_model()` **显式传参**构造,
+构造失败就响亮地抛,不静默退化成假实现。
+
+### 13. Milvus 的运维代价(选它之前要知道)
+
+- **Docker Desktop 必须开着。** Milvus 装了 ≠ 随时能用。Docker 守护进程没起时,
+  `docker ps` 直接报 `npipe:////./pipe/dockerDesktopLinuxEngine` 连不上。
+  每次要用先启动 Docker Desktop,再 `cd D:/devlop/Milvus && docker compose up -d`。
+- **standalone 是三个容器**(etcd + minio + milvus),比单容器的 Qdrant 重,
+  首次启动要等 30~60 秒 `http://127.0.0.1:9091/healthz` 才返回 200。
+- **容器被「重建」后可能报** `InvalidateCollectionMetaCache failed ...
+  node not match[expectedNodeID=2][actualNodeID=3]` —— etcd 里记着旧 proxy 的节点 ID。
+  解:`docker compose down && docker compose up -d`(数据在 bind mount 里,
+  `D:/devlop/Milvus/volumes/milvus`,`down` **不会**删数据)。
+- **Milvus Lite 在 Windows 上不可用。** pymilvus 的 `milvus-lite` extra 里写着
+  `sys_platform != "win32"`,所以"嵌入式、免 Docker"这个卖点在 Windows 上拿不到。
+- 客户端版本要和服务端对齐:服务端 2.5.14 → `pymilvus>=2.5,<2.6`。
+  pymilvus 3.x 是给 Milvus 3.x 服务端用的,别升。
+
 ## 升级路线(P0–P9)
 
 完整方案在 `~/.claude/plans/1-2-rag-subagen-harness-3-piped-spark.md`。当前进度:
@@ -365,11 +479,15 @@ cd backend && ./venv/Scripts/python.exe -c "from urllib.request import getproxie
 | P4 | SQLite 持久化 + 三页面 + 分享链接 | ✅ |
 | **P5** | **评测 harness + baseline 报告** | ✅ **完成**:`data/eval/baseline.md`,10 条行程,共花 ¥0.465 |
 | P6 | 数据接地:让降级路径**不再编造** | ✅ 降级路径已修(`app/agents/fallback.py`);`enrich_pois` 未做(见坑 #4,收益有限) |
-| P7 | RAG 双层知识库(poi_facts + city_guides) | ⬜ |
-| P8 | 并发 + supervisor-worker 编排对比 | ⬜ |
+| **P7** | **RAG 双层知识库(poi_facts + city_guides)** | ✅ **代码完成**:检索层 `app/services/knowledge_service.py` + 灌库(1750 + 30 条)+ 接进 planner(`--rag` 开关)。**A/B 数字还没跑**(要花 LLM 额度,作者自己挑时间跑) |
+| P8 | 并发 + supervisor-worker 编排对比 | ⬜ **作者决定不做** |
 | P9 | 前端去杂乱 + 修 4 个 bug | ⬜ |
 
 **顺序有依赖**:P5 的 baseline 是 P6/P7 的对照组,没有它"我改好了"无法量化。
+
+⚠️ **P7 跑 A/B 时不要拿旧的 `baseline` 当对照组。** 它是**旧提交**录的,
+会把 P6/P7 的代码改动和 RAG 混在一起。正确做法是同一个 tag 跑两遍
+(`--rag=off` / `--rag=on`),两侧用同一份代码,差异才只可能来自那段知识。
 
 ## 工作方式
 

@@ -292,6 +292,21 @@ def do_record(args: argparse.Namespace) -> int:
     requests = select_requests(load_requests(args.requests), args.only, args.limit)
     out_dir = freeze_dir(args.frozen_dir, args.tag)
 
+    # RAG 开关覆盖。
+    #
+    # 为什么在这里改全局设置、而不是给 plan_trip 加参数:
+    # 开关的取值会在两处被读——`trip_planner_agent._rag_enabled()`(决定要不要
+    # 检索)和 `_provenance()`(写进冻结文件的环境指纹)。**必须在两者之前
+    # 统一改掉**,否则会出现「实际按 off 跑、指纹却记着 on」的假数据,
+    # 而那种错误在报告里根本看不出来。
+    rag_override = getattr(args, "rag", None)
+    if rag_override is not None:
+        from ..config import get_settings
+
+        s = get_settings()
+        s.enable_rag = rag_override == "on"
+        print(f"🔧 ENABLE_RAG 被 --rag 覆盖为 {s.enable_rag}")
+
     # 防手滑:record 会花真钱,而且会覆盖掉已有 baseline 的冻结数据。
     # 默认拒绝,逼你想一下。
     existing = sorted(out_dir.glob("*.json"))
@@ -490,6 +505,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--limit", type=int, default=None, help="只跑前 N 条")
 
     g = p.add_argument_group("record 专用")
+    g.add_argument(
+        "--rag",
+        choices=["on", "off"],
+        default=None,
+        help="覆盖 .env 里的 ENABLE_RAG。RAG 的 A/B 对比就是把同一个 tag "
+             "跑两遍:先 --rag=off,再换 tag 跑 --rag=on,然后 diff 两份报告",
+    )
     g.add_argument("--temperature", type=float, default=0.0,
                    help="评测用的温度。默认 0.0 是为了让两次跑尽量一致;写进 provenance")
     g.add_argument("--force", action="store_true", help="允许覆盖已有冻结(会花钱,想清楚)")

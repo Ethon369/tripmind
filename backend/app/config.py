@@ -49,18 +49,31 @@ class Settings(BaseSettings):
     # 日志配置
     log_level: str = "INFO"
 
-    # ---------- RAG / 向量库 ----------
-    # collection 名字里带维度(1024),是为了防止"换了 embedding 模型但忘了重建库"
-    # 导致维度不匹配 —— 那种情况检索会静默返回空结果,不报任何错
-    qdrant_url: str = "http://localhost:6333"
-    qdrant_api_key: str = ""
-    qdrant_collection: str = "trip_kb_1024"
+    # ---------- RAG 向量库:Milvus ----------
+    # 为什么是 Milvus 而不是框架原生支持的 Qdrant:
+    # 本机 D:\devlop\Milvus 已经装好一套 Milvus standalone,起服务零成本。
+    # 而框架**完全不支持 Milvus**(memory/storage 下只有 qdrant/neo4j/document 三个),
+    # 且 create_rag_pipeline() 签名里没有 store 参数、无条件 new QdrantVectorStore,
+    # 没有任何注入点。所以检索层由 app/services/knowledge_service.py 自己写。
+    milvus_uri: str = "http://localhost:19530"
+
+    # collection 名字里带维度,是为了防止"换了 embedding 模型但忘了重建库":
+    # 维度不匹配时 Milvus 不会报错,而是写入/检索结果全乱 —— 属于静默失败。
+    # 两个 namespace 各一个 collection(不是分区):分层清楚,且 stats 能分开看。
+    rag_collection_poi: str = "trip_poi_facts_1024"
+    rag_collection_guides: str = "trip_city_guides_1024"
+    knowledge_dir: str = "./data/knowledge_base"
+
+    # 注入 prompt 的条数。太多会挤占上下文、太少覆盖不到 —— 4 条是权衡后的取值
+    rag_top_k: int = 4
 
     # ---------- Embedding(硅基流动,OpenAI 兼容) ----------
     embed_model_type: str = "dashscope"
     embed_model_name: str = "BAAI/bge-m3"
     embed_api_key: str = ""
     embed_base_url: str = "https://api.siliconflow.cn/v1"
+    # 断言用:维度对不上说明模型换了人,collection 必须重建
+    embed_dim_expected: int = 1024
 
     # ---------- 本地存储 ----------
     db_path: str = "./data/tripmind.db"
