@@ -466,6 +466,58 @@ embedder 用不带 fallback 的 `create_embedding_model()` **显式传参**构�
 - 客户端版本要和服务端对齐:服务端 2.5.14 → `pymilvus>=2.5,<2.6`。
   pymilvus 3.x 是给 Milvus 3.x 服务端用的,别升。
 
+### 14. `git push` 报 408 / "unexpected disconnect" —— 是 **git 自己掐断的**,不是服务器
+
+症状特别有误导性:
+
+```
+error: RPC failed; HTTP 408 curl 22 The requested URL returned error: 408
+send-pack: unexpected disconnect while reading sideband packet
+fatal: the remote end hung up unexpectedly
+```
+
+`unexpected disconnect` 听着像"服务器挂了"或"网断了",**实际是 git 客户端主动放弃**。
+
+排查顺序(下面每步都实测过,弯路就别再走了):
+
+1. **`git ls-remote origin main` 能通吗?** 这台机器上它**通**(连续三次成功),
+   而 `push` 全部失败。**读能通、写不通** → 不是"连不上 GitHub",是传输中被中断。
+2. `git config --get http.postBuffer` —— 这台机器上被设成了 500MB
+   (说明之前就撞过这个墙),但**调大调小都没用**。
+3. `http.version=HTTP/1.1`、`--no-thin` —— **都没用**,不是病因。
+
+**真凶:`http.lowSpeedLimit`。** git 默认在传输速率掉到 1000 字节/秒以下时
+**主动掐断连接**。这台机器走 **Steam++ 加速器**(见下),隧道速度会抖,
+一抖就被 git 自己杀掉,报出来却是"remote end hung up"。
+
+**解**(已在本仓库设好,存于 `.git/config`,机器相关、不随仓库提交):
+
+```bash
+git config --local http.lowSpeedLimit 0
+git config --local http.lowSpeedTime 999999
+```
+
+⚠️ **排查时我自己犯的两个错,写下来免得再犯:**
+
+- 用 `netstat -ano | grep "127.0.0.1:443 "` 查加速器在不在 → **查不到**,
+  于是我得出「工具没在跑」的**错结论**。实际它监听在 **`0.0.0.0:443`**,
+  是我的 grep 写窄了。改用
+  `Get-NetTCPConnection -State Listen -LocalPort 443`(带进程名)。
+  **这和坑 #9 里用 `reg query` 得出反结论是同一类错误**:
+  命令本身用错了,空白的输出被当成了否定证据。
+- 用 `git rev-list --objects A..B | git cat-file --batch-check='%(objectsize)'`
+  估推送体积,算出 **1.15 GB**,虚惊一场 —— 实际最大对象 0.03 MB、整包约 200 KB。
+  **测量命令写错了。** 换成 `'%(objecttype) %(objectsize) %(rest)'` 再排序才对。
+
+**那块 hosts 是谁写的**:`C:\Windows\System32\drivers\etc\hosts` 里有 63 条
+`127.0.0.1` 重定向(GitHub / Steam / Google / Docker Hub / Greasyfork),
+是 **Steam++(Watt Toolkit)加速模式**生成的 —— 它把域名指到本机,
+自己在 `0.0.0.0:443` 做反向代理转发。
+
+**想让 git 直连(比如配合 VPN)时,别手动去删 hosts** ——
+先在加速器里关掉对应的加速项,它通常会自己把那些条目清掉;
+手动删了它会再加回来,而且容易删漏。
+
 ## 升级路线(P0–P9)
 
 完整方案在 `~/.claude/plans/1-2-rag-subagen-harness-3-piped-spark.md`。当前进度:
