@@ -104,7 +104,7 @@ onUnmounted(() => {
 
 <style scoped>
 .gp {
-  padding: var(--sp-6);
+  padding: var(--space-6);
   background: var(--bg-sunken);
   border: 1px dashed var(--brand-300);
   border-radius: var(--radius-md);
@@ -115,8 +115,8 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: var(--sp-3);
-  margin-bottom: var(--sp-5);
+  gap: var(--space-3);
+  margin-bottom: var(--space-5);
 }
 
 .gp-pulse {
@@ -124,7 +124,7 @@ onUnmounted(() => {
   height: 10px;
   border-radius: 50%;
   background: var(--brand-500);
-  animation: pulse 1.6s var(--ease-inout) infinite;
+  animation: pulse 1.6s var(--ease-out) infinite;
   flex-shrink: 0;
 }
 
@@ -150,7 +150,7 @@ onUnmounted(() => {
   width: 40%;
   border-radius: var(--radius-pill);
   background: var(--brand-gradient);
-  animation: gp-slide 1.6s var(--ease-inout) infinite;
+  animation: gp-slide 1.6s var(--ease-out) infinite;
 }
 
 @keyframes gp-slide {
@@ -167,10 +167,10 @@ onUnmounted(() => {
   flex-wrap: wrap;
   align-items: center;
   justify-content: center;
-  gap: var(--sp-2);
-  margin-top: var(--sp-4);
+  gap: var(--space-2);
+  margin-top: var(--space-4);
   color: var(--text-2);
-  font-size: var(--fs-sm);
+  font-size: var(--fs-caption);
 }
 
 .gp-timer {
@@ -188,8 +188,8 @@ onUnmounted(() => {
 
 .gp-warn,
 .gp-slow {
-  margin: var(--sp-3) 0 0;
-  font-size: var(--fs-sm);
+  margin: var(--space-3) 0 0;
+  font-size: var(--fs-caption);
 }
 
 .gp-warn {
@@ -202,13 +202,13 @@ onUnmounted(() => {
 
 .gp-stages {
   list-style: none;
-  margin: var(--sp-5) 0 0;
-  padding: var(--sp-4);
+  margin: var(--space-5) 0 0;
+  padding: var(--space-4);
   display: flex;
   flex-wrap: wrap;
   justify-content: center;
-  gap: var(--sp-2) var(--sp-4);
-  border-top: 1px solid var(--border-2);
+  gap: var(--space-2) var(--space-4);
+  border-top: 1px solid var(--line-1);
 }
 
 .gp-stages li {
@@ -224,13 +224,13 @@ onUnmounted(() => {
 
 @media (max-width: 575px) {
   .gp {
-    padding: var(--sp-4);
+    padding: var(--space-4);
   }
 
   .gp-stages {
     flex-direction: column;
     align-items: center;
-    gap: var(--sp-2);
+    gap: var(--space-2);
   }
 }
 </style>

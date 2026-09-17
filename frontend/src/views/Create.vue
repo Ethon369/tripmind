@@ -16,8 +16,15 @@
         <p class="bubble">{{ draftMessage }}</p>
       </div>
 
-      <!-- ---------------- AI 引导卡片 ---------------- -->
-      <section class="panel">
+      <!-- ---------------- AI 引导卡片 ----------------
+           生成期间整张表单被 GeneratingPanel 顶替：此时改任何字段都不会生效
+           （请求已经发出去了），留着它只会让人反复确认自己填对没有。
+           顶部「取消创建」保持可用，那是反悔的出口。
+
+           生成中的面板用「不确定进度条 + 已用计时 + 阶段轮播」，刻意不显示
+           百分比 —— 后端是一次性响应，前端拿不到任何中间信号；编一个百分比
+           会在真卡住时停在 90% 一动不动，反而让用户以为页面死了去刷新。 -->
+      <section v-if="!loading" class="panel">
         <p class="lead">{{ leadText }}</p>
 
         <!-- 从用户那句话里读出来的信息。
@@ -171,12 +178,13 @@
           <template v-else>正在生成…</template>
         </a-button>
 
-        <p class="foot-note">
-          生成一次约需 30–60 秒，期间请不要关闭页面。想改主意直接
-          <a @click="cancel">返回首页</a>。
-        </p>
-      </section>
-    </div>
+          <p class="foot-note">
+            生成一次约需 30–60 秒，期间请不要关闭页面。想改主意直接
+            <a @click="cancel">返回首页</a>。
+          </p>
+        </section>
+        <GeneratingPanel v-else :city="formData.city" :days="travelDays" />
+      </div>
   </div>
 </template>
 
@@ -187,6 +195,7 @@ import dayjs, { type Dayjs } from 'dayjs';
 import { message } from 'ant-design-vue';
 import { ArrowLeftOutlined } from '@ant-design/icons-vue';
 import { generateTripPlan, parseIntentWithLLM } from '@/services/api';
+import GeneratingPanel from '@/components/trip/GeneratingPanel.vue';
 import { usePlanCache } from '@/composables/usePlanCache';
 import { useTripDraft } from '@/composables/useTripDraft';
 import { parseTripIntent } from '@/utils/parseTripIntent';
