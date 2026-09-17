@@ -226,7 +226,12 @@ class MultiAgentTripPlanner:
             traceback.print_exc()
             raise
     
-    def plan_trip(self, request: TripRequest, observer: NullObserver | None = None) -> TripPlan:
+    def plan_trip(
+        self,
+        request: TripRequest,
+        observer: NullObserver | None = None,
+        knowledge_sink: list[dict] | None = None,
+    ) -> TripPlan:
         """
         使用多智能体协作生成旅行计划
 
@@ -235,6 +240,16 @@ class MultiAgentTripPlanner:
             observer: 可选的运行观察者,用于记录各阶段耗时与 fallback 情况。
                       不传时使用 NullObserver(所有钩子为空操作),行为与
                       加埋点之前完全一致。
+            knowledge_sink: 可选的列表。传了的话,这次检索到的知识出处
+                      (结构化,含 source / heading_path / score / 内容片段)
+                      会被填进去,供调用方落库、在详情页展示。
+
+                      为什么用"调用方传列表"而不是给 TripPlan 加字段或改返回值:
+                      - 加到 TripPlan 上会污染数据契约 —— 那是"行程内容",
+                        而"它参考了什么"是元信息;
+                      - 改返回值会破坏所有调用方(评测脚本也在用)。
+                      传列表既显式又不侵入;而且列表是调用方的局部变量,
+                      天然线程安全 —— 本类是模块级单例,不能用实例属性存这种东西。
 
         Returns:
             旅行计划
@@ -298,7 +313,9 @@ class MultiAgentTripPlanner:
             if self._rag_enabled():
                 print("📚 步骤3.5: 检索知识库...")
                 obs.stage_start("retrieval")
-                knowledge_context = self._retrieve_knowledge(request, obs)
+                knowledge_context = self._retrieve_knowledge(
+                    request, obs, sink=knowledge_sink
+                )
                 obs.stage_end("retrieval")
 
             # 步骤4: 行程规划Agent整合信息生成计划
@@ -343,7 +360,12 @@ class MultiAgentTripPlanner:
         """
         return bool(getattr(get_settings(), "enable_rag", False))
 
-    def _retrieve_knowledge(self, request: TripRequest, obs: NullObserver) -> str:
+    def _retrieve_knowledge(
+        self,
+        request: TripRequest,
+        obs: NullObserver,
+        sink: list[dict] | None = None,
+    ) -> str:
         """检索知识库并拼成 prompt 片段。**检索不到就返回空串。**
 
         **失败绝不能让行程规划挂掉。** RAG 是增强,不是依赖 ——
@@ -352,6 +374,11 @@ class MultiAgentTripPlanner:
 
         这一层的 `KnowledgeService.retrieve()` 内部也已经吞了异常,
         这里是第二道保险(比如 service 构造本身就出问题)。
+
+        Args:
+            sink: 传了的话,把命中的知识**结构化**填进去(用途见 plan_trip 的说明)。
+                  prompt 要的是拼好的字符串,而落库与详情页展示要的是结构化数据 ——
+                  两者用途不同,所以这里同时留一份,不互相迁就。
         """
         try:
             service = get_knowledge_service()
@@ -370,6 +397,11 @@ class MultiAgentTripPlanner:
         for h in hits:
             where = f"{h.source} > {h.heading_path}" if h.heading_path else h.source
             print(f"     {h.score:.3f}  {where}")
+
+        # 结构化留一份给调用方落库。顺序就是现在的顺序(按分数降序),
+        # 落库时按这个顺序存 idx,详情页拿到的第一条就是最相关的。
+        if sink is not None:
+            sink.extend(h.to_dict() for h in hits)
 
         context = format_context(hits)
         # 记进 observer:出问题时能看出「检索到了什么」,而不是只看到最终行程

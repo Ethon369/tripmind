@@ -1,0 +1,126 @@
+/**
+ * 过渡与动画（编辑极简）
+ *
+ * 这个方向的动效是「慢、柔、不弹」：
+ * 时长比通用 SaaS 长一档（200 / 360 / 600ms），缓动统一走柔和减速，
+ * 不做位移弹跳、不做缩放，**没有任何持续循环的装饰动画**。
+ *
+ * 硬性约束：只动 GPU 属性（transform / opacity / filter / clip-path）。
+ */
+
+/* ---------------- 路由级页面过渡 ---------------- */
+.page-enter-active {
+  transition: opacity var(--dur-slow) var(--ease-out),
+    transform var(--dur-slow) var(--ease-out);
+}
+
+.page-leave-active {
+  transition: opacity var(--dur-fast) var(--ease-out),
+    transform var(--dur-fast) var(--ease-out);
+}
+
+.page-enter-from {
+  opacity: 0;
+  /* 位移从原来的 8px 收到 4px —— 编辑语言里不做大幅滑动 */
+  transform: translateY(4px);
+}
+
+/* 退场只淡出、不移位：比"往上飘走"更克制，也不会让内容看起来在躲 */
+.page-leave-to {
+  opacity: 0;
+}
+
+/* ---------------- 关键帧 ---------------- */
+
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes fadeInDown {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* 骨架屏流光 */
+@keyframes shimmer {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+
+/* 「进行中」脉冲：检索中、灌库中等不确定状态 */
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.4;
+  }
+}
+
+/* ---------------- 工具类 ---------------- */
+
+.anim-fade-up {
+  animation: fadeInUp var(--dur-slow) var(--ease-out) both;
+}
+
+.anim-fade-down {
+  animation: fadeInDown var(--dur-slow) var(--ease-out) both;
+}
+
+.anim-fade {
+  animation: fadeIn var(--dur-base) var(--ease-out) both;
+}
+
+/*
+ * 列表错峰进场。
+ * 用 CSS 变量传下标：元素上写 style="--i: 0"，避免为每项生成独立 class。
+ * 上限 8 项 —— 再往后延迟会让人等得不耐烦，不如一起出现。
+ */
+.anim-stagger {
+  animation: fadeInUp var(--dur-slow) var(--ease-out) both;
+  animation-delay: calc(min(var(--i, 0), 8) * 30ms);
+}
+
+/* 骨架块。底色用线色而不是灰阶 —— 与暖白基调一致 */
+.skeleton-block {
+  background: linear-gradient(
+    90deg,
+    var(--bg-sunken) 25%,
+    var(--line-1) 37%,
+    var(--bg-sunken) 63%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.8s linear infinite;
+  border-radius: var(--radius-sm);
+}
+
+.anim-pulse {
+  animation: pulse 1.8s var(--ease-out) infinite;
+}

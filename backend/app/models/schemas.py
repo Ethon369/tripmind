@@ -250,17 +250,37 @@ class PlanListResponse(BaseModel):
     stats: Optional[PlanStats] = Field(default=None, description="聚合统计")
 
 
+class KnowledgeSource(BaseModel):
+    """生成这份行程时,知识库给出的一条参考出处。
+
+    存在的意义:**让「AI 引用了外部知识」这件事变得可见**。
+    没有它,用户看到「故宫需要提前 7 天预约」时无法判断
+    这是模型编的还是知识库里确有其事 —— 而这恰恰是 RAG 全部的价值所在。
+    """
+
+    namespace: str = Field(default="", description="poi_facts | city_guides")
+    source: str = Field(default="", description="文件名 / poi_inventory.json")
+    heading_path: str = Field(default="", description="章节路径,如「门票与预约」")
+    score: float = Field(default=0.0, description="COSINE 相似度")
+    snippet: str = Field(default="", description="内容片段(已截断)")
+
+
 class PlanDetailResponse(BaseModel):
     """单个行程的详情。
 
     data 直接是 TripPlan —— 前端可以复用渲染逻辑,不必为历史详情另写一套。
     meta 装 id / 时间 / 成本这些"行程本身之外"的信息。
+    knowledge 装这次生成用到的知识出处。
     """
 
     success: bool = Field(default=True)
     message: str = Field(default="")
     data: Optional[TripPlan] = Field(default=None)
     meta: Optional[PlanSummary] = Field(default=None)
+    knowledge: List[KnowledgeSource] = Field(
+        default_factory=list,
+        description="这次生成检索到的知识出处(按相关度降序)。没开 RAG 或没命中时为空数组",
+    )
 
 
 # ============ 错误响应 ============

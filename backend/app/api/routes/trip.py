@@ -1,8 +1,12 @@
 """旅行规划API路由"""
 
+import json
+import re
 import time
+from typing import List, Optional
 
 from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel, Field
 from ...models.schemas import (
     TripRequest,
     TripPlan,
@@ -14,6 +18,7 @@ from ...models.schemas import (
 )
 from ...agents.trip_planner_agent import get_trip_planner_agent
 from ...observability import collect_usage, make_observer
+from ...services.llm_service import get_llm
 from ...store import get_plan_store
 
 router = APIRouter(prefix="/trip", tags=["旅行规划"])
@@ -67,9 +72,17 @@ def plan_trip(request: TripRequest):
 
         print("🚀 开始生成旅行计划...")
         observer = make_observer(enabled=True)
+
+        # 收集这次生成用到的知识出处(结构化)。
+        # 用**局部列表**而不是 agent 的实例属性 —— agent 是模块级单例,
+        # 两个请求并发时实例属性会互相覆盖,拿到别人的检索结果。
+        knowledge_hits: list[dict] = []
+
         t0 = time.perf_counter()
         with collect_usage() as usage:
-            trip_plan = agent.plan_trip(request, observer=observer)
+            trip_plan = agent.plan_trip(
+                request, observer=observer, knowledge_sink=knowledge_hits
+            )
         latency_ms = int((time.perf_counter() - t0) * 1000)
 
         print(
@@ -89,6 +102,14 @@ def plan_trip(request: TripRequest):
             usage=usage.summary(),
             latency_ms=latency_ms,
         )
+        # 知识出处单独落一张表。放在 finish_plan **之后**、且单独 try ——
+        # 它失败不该影响"行程已经存好了"这个事实。
+        if knowledge_hits:
+            try:
+                n = store.save_knowledge(plan_id, knowledge_hits)
+                print(f"📚 知识出处已保存: {n} 条")
+            except Exception as kn_err:
+                print(f"⚠️  知识出处保存失败(不影响行程): {kn_err}")
         print(f"💾 已保存: {plan_id} (status={status})")
 
         # 降级时 success=False。
@@ -195,6 +216,184 @@ def health_check():
 
 
 # ===========================================================================
+# 意图解析：从用户的一句话里提取结构化信息
+# ===========================================================================
+
+# 与前端 constants/tripOptions.ts 保持一致。模型给出的选项必须落在白名单里 ——
+# 否则它会自由发挥出"商务酒店""地铁"这类后端不认的值。
+_ALLOWED_PREFS = ["历史文化", "自然风光", "美食", "购物", "艺术", "休闲"]
+_ALLOWED_TRANSPORT = ["公共交通", "自驾", "步行", "混合"]
+_ALLOWED_STAY = ["经济型酒店", "舒适型酒店", "豪华酒店", "民宿"]
+
+
+class ParseIntentRequest(BaseModel):
+    text: str = Field(..., description="用户的一句话", example="我想去重庆玩五天")
+
+
+class ParsedIntent(BaseModel):
+    city: str = Field(default="", description="目的地；没识别出来就是空串")
+    days: Optional[int] = Field(default=None, description="天数 1-30；没识别出来就是 null")
+    preferences: List[str] = Field(default_factory=list)
+    transportation: Optional[str] = None
+    accommodation: Optional[str] = None
+    greeting: str = Field(default="", description="一句自然语言的回应")
+
+
+class ParseIntentResponse(BaseModel):
+    success: bool
+    # llm = 模型解析成功；unavailable = 模型不可用，调用方应回退到自己的规则解析
+    source: str
+    message: str = ""
+    data: ParsedIntent
+
+
+_PARSE_PROMPT = """你是旅行规划助手。请从用户的一句话里提取结构化的出行信息。
+
+用户说：{text}
+
+只输出一个 JSON 对象，不要任何解释、不要 markdown 代码块。字段如下：
+{{
+  "city": "目的地城市或地区名(只写地名，2-6 个字)；没提到就填空字符串",
+  "days": 出行天数(1-30 的整数)；没提到就填 null,
+  "preferences": 从 ["历史文化","自然风光","美食","购物","艺术","休闲"] 里选出用户提到的；没提到就填空数组,
+  "transportation": 从 ["公共交通","自驾","步行","混合"] 里选；没提到就填 null,
+  "accommodation": 从 ["经济型酒店","舒适型酒店","豪华酒店","民宿"] 里选；没提到就填 null,
+  "greeting": "一句 25-45 字的回应:先复述你理解到的需求,再点出这座城市的一个特色。语气自然、像朋友说话,不要用 emoji"
+}}
+
+注意:
+- 用户可能用中文数字(比如「五天」),请转成阿拉伯数字
+- 不要臆造用户没提到的信息;不确定的字段就留空
+"""
+
+
+def _extract_json(text: str) -> Optional[dict]:
+    """从 LLM 返回里抠出 JSON 对象。
+
+    容忍三种情况：裸 JSON、```json 代码块包裹、前后夹着解释性文字。
+    """
+    s = (text or "").strip()
+    if not s:
+        return None
+
+    # 去掉 markdown 代码块包装
+    if s.startswith("```"):
+        s = re.sub(r"^```[a-zA-Z]*\s*", "", s)
+        s = re.sub(r"```\s*$", "", s).strip()
+
+    # 取第一个 { 到最后一个 } —— 模型偶尔会在 JSON 前后多写一两句
+    i, j = s.find("{"), s.rfind("}")
+    if i < 0 or j <= i:
+        return None
+
+    try:
+        parsed = json.loads(s[i : j + 1])
+        return parsed if isinstance(parsed, dict) else None
+    except Exception:
+        return None
+
+
+def _clamp_days(value: object) -> Optional[int]:
+    """把模型给的天数收进 1-30，与 travel_days 的约束保持一致。
+
+    超范围时宁可当成"没识别出来"，也不要返回一个必然被 422 打回的值。
+    """
+    try:
+        n = int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+    return n if 1 <= n <= 30 else None
+
+
+def _pick(value: object, allowed: List[str]) -> Optional[str]:
+    """只接受白名单内的值，避免模型自由发挥出后端不认的选项。"""
+    s = str(value or "").strip()
+    return s if s in allowed else None
+
+
+@router.post(
+    "/parse",
+    response_model=ParseIntentResponse,
+    summary="解析用户意图",
+    description=(
+        "从用户的一句话里提取目的地、天数、偏好等结构化信息，并生成一句回应。"
+        "**这是增强而不是依赖** —— 模型不可用时返回 source='unavailable'，"
+        "调用方应回退到自己的规则解析。"
+    ),
+)
+def parse_intent(request: ParseIntentRequest):
+    """解析用户的一句话。
+
+    ⚠️ 这里**刻意不包 collect_usage()**。
+
+    `plan_trip` 用它把一次运行里所有 LLM 调用计入同一条用量记录,因为那是一次
+    "生成行程"的完整动作。而这里只是一次轻量的字段提取,和生成是两件事 ——
+    计进去会让那次生成的成本统计虚高(用户看到"生成一次花 5 分钱",其中一部分
+    其实是进创建页时解析意图花的)。
+
+    代价是这次调用的 token 不进统计。它只有几百 token,可以接受。
+    """
+    text = (request.text or "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="text 不能为空")
+    if len(text) > 500:
+        text = text[:500]
+
+    empty = ParsedIntent()
+
+    try:
+        llm = get_llm()
+        content = llm.invoke(
+            [{"role": "user", "content": _PARSE_PROMPT.format(text=text)}],
+            temperature=0,  # 要稳定的结构化输出,不要创造性
+            # ⚠️ 这里给到 2000 而不是 500,是实测踩出来的:
+            # 用 500 时简单输入(「我想去重庆玩五天」)能出结果,稍复杂的
+            # (「国庆想去云南待7天,喜欢自然风光和美食」)返回的是**空字符串** ——
+            # token 被用尽,content 就空了。这个模型有思维链开销,
+            # 留给"最终答案"的额度必须比答案本身大得多。
+            max_tokens=2000,
+        )
+    except Exception as exc:
+        # 模型不可用(没配 key / 超时 / 代理挂了)时**不能让前端跟着挂** ——
+        # 前端本来就有规则解析,这里如实报告,由它决定回退。
+        print(f"⚠️  意图解析不可用: {type(exc).__name__}: {exc}")
+        return ParseIntentResponse(
+            success=False,
+            source="unavailable",
+            message=f"模型不可用: {type(exc).__name__}",
+            data=empty,
+        )
+
+    raw = _extract_json(content)
+    if raw is None:
+        print(f"⚠️  意图解析返回的不是 JSON: {content[:200]}")
+        return ParseIntentResponse(
+            success=False,
+            source="unavailable",
+            message="模型返回格式异常",
+            data=empty,
+        )
+
+    raw_prefs = raw.get("preferences")
+    prefs = (
+        [str(p) for p in raw_prefs if str(p) in _ALLOWED_PREFS]
+        if isinstance(raw_prefs, list)
+        else []
+    )
+
+    data = ParsedIntent(
+        city=str(raw.get("city") or "").strip()[:20],
+        days=_clamp_days(raw.get("days")),
+        preferences=prefs[:3],  # 上限 3,与前端 LIMITS.MAX_PREFERENCES 对齐
+        transportation=_pick(raw.get("transportation"), _ALLOWED_TRANSPORT),
+        accommodation=_pick(raw.get("accommodation"), _ALLOWED_STAY),
+        greeting=str(raw.get("greeting") or "").strip()[:120],
+    )
+
+    return ParseIntentResponse(success=True, source="llm", message="解析成功", data=data)
+
+
+# ===========================================================================
 # 历史行程
 # ===========================================================================
 # 这几个端点都是同步 def —— 里面是阻塞的 sqlite3 调用,
@@ -267,15 +466,22 @@ def get_plan_detail(plan_id: str):
         warnings=row["warnings"] or [],
     )
 
+    # 知识出处一起返回。没开 RAG / 没命中 / 记录不存在时,store 返回空列表 ——
+    # 前端据此决定显不显示那张卡片,不需要额外判断。
+    knowledge = store.get_knowledge(plan_id)
+
     if plan is None:
         return PlanDetailResponse(
             success=False,
             message=f"该行程尚未生成完成(状态: {row['status']})",
             data=None,
             meta=meta,
+            knowledge=knowledge,
         )
 
-    return PlanDetailResponse(success=True, message="获取成功", data=plan, meta=meta)
+    return PlanDetailResponse(
+        success=True, message="获取成功", data=plan, meta=meta, knowledge=knowledge
+    )
 
 
 @router.put(

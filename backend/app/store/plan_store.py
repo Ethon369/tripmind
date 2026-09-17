@@ -193,7 +193,61 @@ class PlanStore:
         with connect(self.db_path) as conn:
             conn.execute("UPDATE runs SET plan_id = NULL WHERE plan_id = ?", (plan_id,))
             cur = conn.execute("DELETE FROM plans WHERE id = ?", (plan_id,))
+            # plan_knowledge 不需要手动删 —— 它的外键带 ON DELETE CASCADE,
+            # 且连接里开了 PRAGMA foreign_keys=ON,删 plans 时会自动带走。
             return cur.rowcount > 0
+
+    # ---------- 知识出处 ----------
+
+    def save_knowledge(self, plan_id: str, hits: list[dict[str, Any]]) -> int:
+        """保存这次生成检索到的知识出处。
+
+        先删后插:虽然一份行程只会生成一次,但接口允许重新生成,
+        不先清的话旧记录会和新的混在一起(主键是 plan_id+idx,会冲突)。
+
+        `content` 只留前 300 字符 —— 完整分块可能有上千字,
+        而详情页只需要让用户看出"参考了什么",不是把攻略全文再抄一遍。
+        """
+        with connect(self.db_path) as conn:
+            conn.execute("DELETE FROM plan_knowledge WHERE plan_id = ?", (plan_id,))
+            if not hits:
+                return 0
+            conn.executemany(
+                """
+                INSERT INTO plan_knowledge
+                    (plan_id, idx, namespace, source, heading_path, score, snippet)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    (
+                        plan_id,
+                        i,
+                        str(h.get("namespace") or ""),
+                        str(h.get("source") or ""),
+                        str(h.get("heading_path") or ""),
+                        float(h.get("score") or 0.0),
+                        str(h.get("content") or "")[:300],
+                    )
+                    for i, h in enumerate(hits)
+                ],
+            )
+        return len(hits)
+
+    def get_knowledge(self, plan_id: str) -> list[dict[str, Any]]:
+        """读取一次生成的知识出处。
+
+        按 idx 升序 —— 它保的就是当初 **分数降序** 的顺序,
+        所以前端拿到的第一条就是最相关的那条。
+        """
+        with connect(self.db_path) as conn:
+            rows = conn.execute(
+                """
+                SELECT idx, namespace, source, heading_path, score, snippet
+                FROM plan_knowledge WHERE plan_id = ? ORDER BY idx
+                """,
+                (plan_id,),
+            ).fetchall()
+        return [dict(r) for r in rows]
 
     # ---------- 读 ----------
 

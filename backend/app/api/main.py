@@ -3,7 +3,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from ..config import get_settings, validate_config, print_config
-from .routes import trip, poi, map as map_routes
+from .routes import trip, poi, knowledge, map as map_routes
 
 # 获取配置
 settings = get_settings()
@@ -30,6 +30,9 @@ app.add_middleware(
 app.include_router(trip.router, prefix="/api")
 app.include_router(poi.router, prefix="/api")
 app.include_router(map_routes.router, prefix="/api")
+# 知识库(RAG)。在此之前的唯一入口是 scripts/ingest_knowledge.py,
+# 前端没有接入点 —— 所以这个 router 是「知识库页面」的前置条件。
+app.include_router(knowledge.router, prefix="/api")
 
 
 @app.on_event("startup")

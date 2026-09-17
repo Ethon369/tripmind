@@ -107,6 +107,27 @@ CREATE TABLE IF NOT EXISTS llm_calls (
     created_at        TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_llm_calls_run ON llm_calls(run_id, seq);
+
+-- 一份行程检索到的知识出处(RAG 的"它参考了什么")。
+--
+-- 为什么单独一张表而不是给 plans 加一列:
+--   CREATE TABLE IF NOT EXISTS 对**已有**的库也会执行,所以老库能自动补上这张表;
+--   而给 plans 加列必须写 ALTER TABLE 迁移。项目一共就这几张表,不值得为迁移引工具。
+--
+-- 为什么需要它:生成行程时模型会引用城市攻略与 POI 事实,但引用是**看不见的** ——
+-- 用户看到"故宫需要提前预约"时,无法判断这是模型编的还是知识库里确有其事。
+-- 存下来之后,行程详情页就能把出处摊开。
+CREATE TABLE IF NOT EXISTS plan_knowledge (
+    plan_id      TEXT NOT NULL REFERENCES plans(id) ON DELETE CASCADE,
+    idx          INTEGER NOT NULL,      -- 保序:接口返回时按分数降序
+    namespace    TEXT NOT NULL,         -- 'poi_facts' | 'city_guides'
+    source       TEXT NOT NULL,         -- 文件名 / poi_inventory.json
+    heading_path TEXT,                  -- 章节路径,如「门票与预约」
+    score        REAL NOT NULL,         -- COSINE 相似度
+    snippet      TEXT,                  -- 内容摘要(截断),供前端展示
+    PRIMARY KEY (plan_id, idx)
+);
+CREATE INDEX IF NOT EXISTS idx_plan_knowledge_plan ON plan_knowledge(plan_id);
 """
 
 

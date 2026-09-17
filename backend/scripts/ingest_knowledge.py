@@ -37,37 +37,7 @@ if sys.stdout.encoding and sys.stdout.encoding.lower() not in ("utf-8", "utf8"):
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
 
 from app.config import get_settings  # noqa: E402
-from app.services.knowledge_service import (  # noqa: E402
-    KnowledgeService,
-    resolve_dir,
-    split_markdown_sections,
-)
-
-
-def _count_poi(service: KnowledgeService, settings) -> dict:
-    """数一数 frozen 库存里有多少条可入库的 POI。"""
-    import json
-
-    path = resolve_dir(settings.frozen_dir) / "amap" / "poi_inventory.json"
-    data = json.loads(path.read_text(encoding="utf-8"))
-    per_city: dict[str, int] = {}
-    for city, payload in (data.get("cities") or {}).items():
-        per_city[city] = sum(
-            1 for p in (payload or {}).get("pois") or [] if p.get("id") and p.get("name")
-        )
-    return per_city
-
-
-def _count_guides(settings) -> dict:
-    """数一数每篇攻略会被切成多少块。**复用入库时同一套切分函数** ——
-    如果这里另写一份统计逻辑,数字和实际入库的就不会一致,那种"预估"没有意义。
-    """
-    directory = resolve_dir(settings.knowledge_dir) / "city_guides"
-    per_file: dict[str, int] = {}
-    for f in sorted(directory.glob("*.md")):
-        sections = split_markdown_sections(f.read_text(encoding="utf-8"), source=f.name)
-        per_file[f.name] = len(sections)
-    return per_file
+from app.services.knowledge_service import KnowledgeService  # noqa: E402
 
 
 def do_dry_run(service: KnowledgeService, settings) -> None:
@@ -75,18 +45,21 @@ def do_dry_run(service: KnowledgeService, settings) -> None:
     print("演练模式 —— 只统计条数,不调用 embedding 接口,不花钱")
     print("=" * 66)
 
+    # 统计逻辑在 KnowledgeService 里,与 HTTP 接口共用同一份 ——
+    # 以前这两个函数是脚本私有的,做成接口时就得复制一遍,
+    # 那种「预览说 30 块、实际灌进去 24 块」的漂移迟早会发生。
     print("\n[poi_facts] 数据源: data/frozen/amap/poi_inventory.json")
-    poi = _count_poi(service, settings)
-    for city, n in poi.items():
+    poi = service.preview_poi_facts()
+    for city, n in (poi.get("per_city") or {}).items():
         print(f"    {city}: {n} 条")
-    poi_total = sum(poi.values())
+    poi_total = int(poi.get("total") or 0)
     print(f"    合计 {poi_total} 条")
 
     print("\n[city_guides] 数据源: data/knowledge_base/city_guides/*.md")
-    guides = _count_guides(settings)
-    for name, n in guides.items():
+    guides = service.preview_city_guides()
+    for name, n in (guides.get("per_file") or {}).items():
         print(f"    {name}: {n} 块")
-    guide_total = sum(guides.values())
+    guide_total = int(guides.get("total") or 0)
     print(f"    合计 {guide_total} 块")
 
     total = poi_total + guide_total
@@ -119,10 +92,8 @@ def do_query(service: KnowledgeService, queries: list[str], top_k: int) -> None:
     print("=" * 66)
     for q in queries:
         print(f"\n▼ 查询: {q!r}")
-        hits = service.retrieve(q, service.NAMESPACE_GUIDES, top_k) + service.retrieve(
-            q, service.NAMESPACE_POI, top_k
-        )
-        hits.sort(key=lambda h: h.score, reverse=True)
+        # 与 HTTP 检索接口共用同一个归并实现
+        hits = service.retrieve_merged(q, top_k)
         if not hits:
             print("    (没有命中 —— collection 建了吗?跑过 ingest 了吗?)")
             continue

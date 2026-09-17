@@ -1,0 +1,242 @@
+/**
+ * 设计令牌 —— 深青 · 轻盈
+ *
+ * 结构与中性色来自参考站 https://www.helloaitrip.cn/canvas
+ * （色值不是目测的，是从它产物的 CSS 里提取的真实自定义属性 ——
+ *   它用 Tailwind v4，定义了 --color-accent / --color-ink-* 等语义令牌）。
+ * **主色已从 Indigo 换成深青**，理由见下面「主色」那一段。
+ *
+ * 核心特征：
+ *   1. **深青主色** `#0e7490` 配 Slate 中性色
+ *   2. **柔和的青色光晕**做背景装饰（不是铺满的渐变）
+ *   3. **大圆角 + 药丸**：卡片 16–24px，按钮与输入框 9999px
+ *   4. **极轻的阴影** + 浅色描边，营造"浮起来的纸片"感
+ *   5. 主按钮用 `135deg #155e75 → #0e7490` 渐变，带同色柔光
+ *
+ * ⚠️ 迁移说明
+ * 保留了一组旧变量名（--sp-N、--border-1/2、--bg-card、--panel-* 等），
+ * 它们被尚未改造的页面引用。值已映射到新体系，那些页面不会破碎。
+ * 每改造完一个页面就清掉它的旧引用；全部改完后整个 @deprecated 区块可删。
+ */
+
+:root {
+  /* ==========================================================
+     一、色彩
+     ========================================================== */
+
+  /* ---- 页面底色 ----
+   * #f4f5f9 是参考站的 --color-app。带一点点蓝灰，
+   * 让白卡片浮起来 —— 纯白底上放白卡片是看不出层次的。 */
+  --bg-page: #f4f5f9;
+  --bg-surface: #ffffff;
+  --bg-sunken: #f1f5f9;
+  /* 浅色容器底：标签、选中态、强调区块 */
+  --bg-tint: #ecfeff;
+  --bg-tint-hover: #d9f5fa;
+  --bg-hover: #f8f9fc;
+
+  /* ---- 文字 ----
+   * 对齐参考站的 ink 阶梯（Slate 体系）。
+   * ⚠️ --text-2 (#64748b) 在白卡片上是 4.8:1 达标，
+   *    但在浅灰底 (#f4f5f9) 上只有 4.4:1 —— 辅助文字要放在白底上。 */
+  --text-1: #1e293b; /* on #fff 14.5:1  AAA */
+  --text-2: #64748b; /* on #fff  4.8:1  AA   */
+  --text-3: #94a3b8; /* 仅用于 ≥18px 大字或纯装饰 */
+  --text-disabled: #c4cad5;
+  --text-inverse: #ffffff;
+
+  /* ---- 主色（深青 · 湖海） ----
+   * 色阶取自 Tailwind cyan。注意主色落在 cyan-700 而不是 500 ——
+   * cyan-500 (#06b6d4) 配白字只有 2.4:1，完全不能用；
+   * #0e7490 配白字是 5.36:1，过 AA。
+   *
+   * 用它而不是紫色的理由：旅行产品需要"目的地感"（湖海山川），
+   * 而且青绿在同类产品里比紫色少见 —— 紫色已被 AI 产品用滥了。 */
+  --brand-50: #ecfeff;
+  --brand-100: #cffafe;
+  --brand-300: #67e8f9;
+  --brand-400: #22d3ee;
+  --brand-500: #0e7490;
+  --brand-600: #155e75;
+  --brand-700: #164e63;
+  --brand-ink: #155e75; /* 链接/强调文字（白底 7.3:1） */
+
+  /* 主按钮渐变。**两个端点都做过对比度核算**：
+     最浅端 #0e7490 配白字 5.36:1，最深端 #155e75 是 7.26:1 —— 全程达标。
+     刻意没做"深→亮"的大跨度渐变，那种渐变的浅端白字会掉到 3:1 以下。 */
+  --brand-gradient: linear-gradient(135deg, #155e75, #0e7490);
+
+  /* 品牌色的半透明层级。用 color-mix 而不是写死 rgba ——
+     以后换主色只需要改 --brand-500，下面这几层会自动跟着变。 */
+  --brand-a14: color-mix(in srgb, var(--brand-500) 14%, transparent);
+  --brand-a26: color-mix(in srgb, var(--brand-500) 26%, transparent);
+  --brand-a34: color-mix(in srgb, var(--brand-500) 34%, transparent);
+
+  /* 同色柔光：主按钮的"发光"效果，是这套视觉的关键细节之一 */
+  --shadow-brand: 0 4px 14px var(--brand-a26);
+
+  /* 兼容旧名 */
+  --accent: var(--brand-500);
+  --accent-strong: var(--brand-600);
+  --accent-tint: var(--brand-50);
+
+  /* ---- 线 ---- */
+  --line-1: #edeff5; /* --color-border */
+  --line-2: #e7e9f1; /* --color-border-strong */
+  --divider: #ebedf3;
+
+  /* ---- 语义色 ---- */
+  --success: #2bc48a;
+  --warning: #d58a3a;
+  --error: #e34850;
+  --info: var(--brand-500);
+
+  /* 语义浅底（用于 alert / tag 的填充） */
+  --success-tint: #e8f8f1;
+  --warning-tint: #fbf1e6;
+  --error-tint: #fdeceb;
+  --info-tint: #ecfeff;
+
+  --status-ok: var(--success);
+  --status-fallback: var(--warning);
+  --status-error: var(--error);
+  --status-running: var(--brand-500);
+
+  /* ==========================================================
+     二、字体
+     ========================================================== */
+
+  /* 参考站用的是系统栈 —— 这套风格靠圆角和色彩建立气质，不靠字体。
+     这里保持一致，不引入自定义字体（省掉中文字库的加载成本）。 */
+  --font-sans: -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Hiragino Sans GB',
+    'Microsoft YaHei', 'Helvetica Neue', Arial, sans-serif;
+  --font-display: -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Hiragino Sans GB',
+    'Microsoft YaHei', 'Helvetica Neue', Arial, sans-serif;
+  --font-num: 'SF Mono', 'Cascadia Mono', 'Roboto Mono', Consolas, Monaco, monospace;
+
+  --fs-display: clamp(28px, 5vw, 44px);
+  --fs-h1: 26px;
+  --fs-h2: 20px;
+  --fs-h3: 16px;
+  --fs-body: 15px;
+  --fs-caption: 13px;
+  --fs-micro: 12px;
+
+  --lh-tight: 1.25;
+  --lh-body: 1.7;
+
+  --ls-tight: -0.01em;
+
+  --fw-regular: 400;
+  --fw-medium: 500;
+  --fw-semibold: 600;
+  --fw-bold: 700;
+
+  /* ==========================================================
+     三、间距
+     ========================================================== */
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-7: 32px;
+  --space-8: 48px;
+  --space-9: 64px;
+
+  --pad-page: 40px;
+  --pad-page-md: 24px;
+  --pad-page-sm: 16px;
+  --measure: 720px;
+  --container: 1120px;
+  --container-wide: 1280px;
+  /* 表单与内容列的舒适宽度（参考站的 hero 与卡片列大约就是这个量级） */
+  --container-narrow: 760px;
+
+  /* ==========================================================
+     四、圆角
+     ========================================================== */
+
+  --radius-xs: 6px;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 24px;
+  --radius-pill: 9999px;
+
+  /* ==========================================================
+     五、阴影
+     ========================================================== */
+
+  /* 取 Tailwind 的默认阶梯 —— 参考站就是用这一套，柔和、不脏 */
+  --shadow-1: 0 1px 2px 0 rgba(15, 23, 42, 0.05);
+  --shadow-2: 0 1px 3px 0 rgba(15, 23, 42, 0.08), 0 1px 2px -1px rgba(15, 23, 42, 0.08);
+  --shadow-3: 0 4px 6px -1px rgba(15, 23, 42, 0.07), 0 2px 4px -2px rgba(15, 23, 42, 0.07);
+  --shadow-4: 0 10px 15px -3px rgba(15, 23, 42, 0.08), 0 4px 6px -4px rgba(15, 23, 42, 0.08);
+  --shadow-overlay: 0 20px 25px -5px rgba(15, 23, 42, 0.1),
+    0 8px 10px -6px rgba(15, 23, 42, 0.1);
+
+  /* ==========================================================
+     六、动效
+     ========================================================== */
+
+  --dur-instant: 100ms;
+  --dur-fast: 150ms;
+  --dur-base: 200ms;
+  --dur-slow: 300ms;
+  --ease-out: cubic-bezier(0.4, 0, 0.2, 1);
+  --ease-spring: cubic-bezier(0.34, 1.3, 0.64, 1);
+
+  /* ==========================================================
+     七、其它
+     ========================================================== */
+
+  --header-h: 60px;
+  --header-h-mobile: 56px;
+  --touch-min: 44px;
+
+  /* ==========================================================
+     @deprecated 过渡期别名 —— 仅被尚未改造的页面引用
+     ========================================================== */
+
+  /* 间距旧序号 */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 20px;
+  --sp-6: 24px;
+  --sp-8: 32px;
+  --sp-10: 40px;
+  --sp-12: 48px;
+
+  /* 旧名 */
+  --bg-card: #ffffff;
+  --border-1: #edeff5;
+  --border-2: #edeff5;
+  --text-3-old: #94a3b8;
+  --fs-sm: 14px;
+  --fs-label: 12px;
+  --container-max: 1120px;
+  --ls-label: 0.02em;
+  --ls-body: 0;
+  --ls-display: -0.01em;
+  --lh-snug: 1.4;
+
+  --ease-in: cubic-bezier(0.4, 0, 1, 1);
+  --ease-inout: cubic-bezier(0.4, 0, 0.2, 1);
+
+  --radius-lg-old: 16px;
+  --shadow-none: none;
+}
+
+/*
+ * 断点基准（CSS 变量不能用于 media query 条件，此处仅作文档）：
+ *   xs  < 576px   手机竖屏
+ *   sm  >= 576px  手机横屏
+ *   md  >= 768px  平板竖屏
+ *   lg  >= 992px  平板横屏
+ *   xl  >= 1200px 桌面
+ */

@@ -1,1499 +1,1002 @@
 <template>
-  <div class="result-container">
-    <!-- 页面头部 -->
-    <div class="page-header">
-      <a-button class="back-button" size="large" @click="goBack">
-        ← 返回首页
+  <div class="result">
+    <!-- ---------------- 页头 ---------------- -->
+    <header class="rh">
+      <a-button class="rh-back" @click="goBack">
+        <template #icon><ArrowLeftOutlined /></template>
+        返回
       </a-button>
-      <a-space size="middle">
-        <!-- 分享模式下整组编辑按钮都不出现(不是禁用 —— 别人打开链接
-             看到的应该是一份干净的行程,而不是一排点不动的按钮) -->
-        <a-button v-if="!editMode && !isShareMode" @click="toggleEditMode" type="default">
-          ✏️ 编辑行程
-        </a-button>
-        <a-button
-          v-else-if="editMode"
-          @click="saveChanges"
-          type="primary"
-          :loading="saving"
-        >
-          💾 保存修改
-        </a-button>
-        <a-button v-if="editMode" @click="cancelEdit" type="default">
-          ❌ 取消编辑
+
+      <div class="rh-actions">
+        <!-- 分享模式下整组编辑/删除按钮都不出现（不是禁用 ——
+             别人打开链接看到的应该是一份干净的行程，而不是一排点不动的按钮） -->
+        <template v-if="!editMode && !isShareMode">
+          <a-button @click="toggleEdit">
+            <template #icon><EditOutlined /></template>
+            <span class="rh-btn-text">编辑行程</span>
+          </a-button>
+        </template>
+        <template v-else-if="editMode">
+          <a-button type="primary" :loading="saving" @click="saveChanges">
+            <template #icon><SaveOutlined /></template>
+            <span class="rh-btn-text">保存修改</span>
+          </a-button>
+          <a-button @click="cancelEdit">
+            <span class="rh-btn-text">取消编辑</span>
+          </a-button>
+        </template>
+
+        <a-button v-if="planId && !editMode" @click="shareOpen = true">
+          <template #icon><LinkOutlined /></template>
+          <span class="rh-btn-text">分享</span>
         </a-button>
 
-        <!-- 有 id 才谈得上分享 -->
-        <a-button v-if="planId && !editMode" type="default" @click="copyShareLink">
-          🔗 复制分享链接
-        </a-button>
-
-        <!-- 导出按钮 -->
-        <a-dropdown v-if="!editMode">
+        <a-dropdown v-if="!editMode && state === 'ready'">
           <template #overlay>
             <a-menu>
-              <a-menu-item key="image" @click="exportAsImage">
-                📷 导出为图片
-              </a-menu-item>
-              <a-menu-item key="pdf" @click="exportAsPDF">
-                📄 导出为PDF
-              </a-menu-item>
+              <a-menu-item key="image" @click="onExportImage">导出为图片</a-menu-item>
+              <a-menu-item key="pdf" @click="onExportPdf">导出为 PDF</a-menu-item>
             </a-menu>
           </template>
-          <a-button type="default">
-            📥 导出行程 <DownOutlined />
+          <a-button>
+            <template #icon><DownloadOutlined /></template>
+            <span class="rh-btn-text">导出</span>
           </a-button>
         </a-dropdown>
-      </a-space>
+      </div>
+    </header>
+
+    <!-- ---------------- 撤销删除提示条 ----------------
+         原来删除景点只有一句 message.success，误删只能靠「取消编辑」整体回滚，
+         粒度太粗。这里给一个 8 秒的撤销窗口。 -->
+    <div v-if="undoState" class="undo-bar" role="status">
+      <span>已删除「{{ undoState.name }}」</span>
+      <a-button type="link" size="small" @click="undoDelete">撤销</a-button>
     </div>
 
-    <div v-if="tripPlan" class="content-wrapper">
-      <!-- 侧边导航 -->
-      <div class="side-nav">
-        <a-affix :offset-top="80">
-          <a-menu mode="inline" :selected-keys="[activeSection]" @click="scrollToSection">
-            <a-menu-item key="overview">
-              <span>📋 行程概览</span>
-            </a-menu-item>
-            <a-menu-item key="budget" v-if="tripPlan.budget">
-              <span>💰 预算明细</span>
-            </a-menu-item>
-            <a-menu-item key="map">
-              <span>📍 景点地图</span>
-            </a-menu-item>
-            <a-sub-menu key="days" title="📅 每日行程">
-              <a-menu-item v-for="(day, index) in tripPlan.days" :key="`day-${index}`">
-                第{{ day.day_index + 1 }}天
-              </a-menu-item>
-            </a-sub-menu>
-            <a-menu-item key="weather" v-if="tripPlan.weather_info && tripPlan.weather_info.length > 0">
-              <span>🌤️ 天气信息</span>
-            </a-menu-item>
-          </a-menu>
-        </a-affix>
-      </div>
+    <!-- 降级行程的顶部警示 -->
+    <a-alert
+      v-if="state === 'ready' && meta?.status === 'fallback'"
+      class="fallback-alert"
+      type="warning"
+      show-icon
+      message="此行程的部分数据不可靠"
+      :description="(meta.warnings || []).join('；') || '生成过程中有环节降级，内容可能不完整。'"
+    />
 
-      <!-- 主内容区 -->
-      <div class="main-content">
-        <!-- 顶部信息区:左侧概览+预算,右侧地图 -->
-        <div class="top-info-section">
-          <!-- 左侧:行程概览和预算明细 -->
-          <div class="left-info">
-            <!-- 行程概览 -->
-            <a-card id="overview" :title="`${tripPlan.city}旅行计划`" :bordered="false" class="overview-card">
-              <div class="overview-content">
-                <div class="info-item">
-                  <span class="info-label">📅 日期:</span>
-                  <span class="info-value">{{ tripPlan.start_date }} 至 {{ tripPlan.end_date }}</span>
-                </div>
-                <div class="info-item">
-                  <span class="info-label">💡 建议:</span>
-                  <span class="info-value">{{ tripPlan.overall_suggestions }}</span>
-                </div>
-              </div>
-            </a-card>
+    <!-- ---------------- 四态 ----------------
+         加载态与空态在这里是**互斥的两个分支**。
+         原实现是 `v-if="tripPlan" ... v-else <空态>`，而 tripPlan 在
+         await getPlan() 返回前是 falsy —— 于是加载期间用户先看到
+         「没有找到旅行计划数据 / 请先创建行程」，一秒后才被真实内容顶掉。 -->
+    <StatePanel v-if="state === 'loading'" state="loading" skeleton="plan" />
 
-            <!-- 预算明细 -->
-            <a-card id="budget" v-if="tripPlan.budget" title="💰 预算明细" :bordered="false" class="budget-card">
-              <div class="budget-grid">
-                <div class="budget-item">
-                  <div class="budget-label">景点门票</div>
-                  <div class="budget-value">¥{{ tripPlan.budget.total_attractions }}</div>
-                </div>
-                <div class="budget-item">
-                  <div class="budget-label">酒店住宿</div>
-                  <div class="budget-value">¥{{ tripPlan.budget.total_hotels }}</div>
-                </div>
-                <div class="budget-item">
-                  <div class="budget-label">餐饮费用</div>
-                  <div class="budget-value">¥{{ tripPlan.budget.total_meals }}</div>
-                </div>
-                <div class="budget-item">
-                  <div class="budget-label">交通费用</div>
-                  <div class="budget-value">¥{{ tripPlan.budget.total_transportation }}</div>
-                </div>
-              </div>
-              <div class="budget-total">
-                <span class="total-label">预估总费用</span>
-                <span class="total-value">¥{{ tripPlan.budget.total }}</span>
-              </div>
-            </a-card>
-          </div>
+    <StatePanel
+      v-else-if="state === 'error'"
+      state="error"
+      :error-kind="errorKind"
+      :detail="errorDetail"
+      @retry="load"
+    >
+      <template #extra>
+        <a-button @click="goHistory">查看历史行程</a-button>
+      </template>
+    </StatePanel>
 
-          <!-- 右侧:地图 -->
-          <div class="right-map">
-            <a-card id="map" title="📍 景点地图" :bordered="false" class="map-card">
-              <div id="amap-container" style="width: 100%; height: 100%"></div>
-            </a-card>
-          </div>
+    <div v-else-if="state === 'ready' && tripPlan" class="plan-view">
+      <!-- ---------------- 分页 Tab ----------------
+           总览 / Day 1 / Day 2 … 各自是一个"页面"，用 ?day=N 记在地址上 ——
+           刷新、收藏、发给同行的朋友都能直接落到同一页。
+           原来是一个超长页面靠滚动，多天行程只能靠数第几天。
+
+           切页用 router.replace 而不是 push：不写历史记录，
+           否则 5 天的行程按一次返回要退 5 次才能离开这个页面。 -->
+      <nav class="tabs" aria-label="行程分页">
+        <button
+          type="button"
+          class="tab"
+          :class="{ 'is-active': activeDay === null }"
+          :aria-current="activeDay === null ? 'page' : undefined"
+          @click="setDay(null)"
+        >
+          总览
+        </button>
+
+        <button
+          v-for="(d, i) in tripPlan.days"
+          :key="d.date"
+          type="button"
+          class="tab"
+          :class="{ 'is-active': activeDay === i }"
+          :aria-current="activeDay === i ? 'page' : undefined"
+          @click="setDay(i)"
+        >
+          Day {{ d.day_index + 1 }}
+          <em v-if="tabWeather(d.date)" class="tab-weather">{{ tabWeather(d.date) }}</em>
+        </button>
+      </nav>
+
+      <!-- ---------------- 内容 + 地图 ----------------
+           桌面：左边内容、右边地图常驻全高。
+           地图常驻的好处是——切到哪天，地图就跟着聚焦到那天的景点，
+           不用滚回去找地图。 -->
+      <div class="rc-body">
+        <div class="rc-content">
+          <OverviewPanel
+            v-if="activeDay === null"
+            :plan="tripPlan"
+            :knowledge="knowledgeSources"
+            @open-day="setDay"
+          />
+          <DayTimeline
+            v-else
+            :day="tripPlan.days[activeDay]"
+            :editable="editMode"
+            @changed="onDayChanged"
+            @remove="onRemoveAttraction"
+          />
         </div>
 
-        <!-- 每日行程:可折叠 -->
-        <a-card title="📅 每日行程" :bordered="false" class="days-card">
-          <a-collapse v-model:activeKey="activeDays" accordion>
-            <a-collapse-panel
-              v-for="(day, index) in tripPlan.days"
-              :key="index"
-              :id="`day-${index}`"
-            >
-              <template #header>
-                <div class="day-header">
-                  <span class="day-title">第{{ day.day_index + 1 }}天</span>
-                  <span class="day-date">{{ day.date }}</span>
-                </div>
-              </template>
-
-              <!-- 行程基本信息 -->
-              <div class="day-info">
-                <div class="info-row">
-                  <span class="label">📝 行程描述:</span>
-                  <span class="value">{{ day.description }}</span>
-                </div>
-                <div class="info-row">
-                  <span class="label">🚗 交通方式:</span>
-                  <span class="value">{{ day.transportation }}</span>
-                </div>
-                <div class="info-row">
-                  <span class="label">🏨 住宿:</span>
-                  <span class="value">{{ day.accommodation }}</span>
-                </div>
-              </div>
-
-              <!-- 景点安排 -->
-              <a-divider orientation="left">🎯 景点安排</a-divider>
-              <a-list
-                :data-source="day.attractions"
-                :grid="{ gutter: 16, column: 2 }"
-              >
-                <template #renderItem="{ item, index }">
-                  <a-list-item>
-                    <a-card :title="item.name" size="small" class="attraction-card">
-                      <!-- 编辑模式下的操作按钮 -->
-                      <template #extra v-if="editMode">
-                        <a-space>
-                          <a-button
-                            size="small"
-                            @click="moveAttraction(day.day_index, index, 'up')"
-                            :disabled="index === 0"
-                          >
-                            ↑
-                          </a-button>
-                          <a-button
-                            size="small"
-                            @click="moveAttraction(day.day_index, index, 'down')"
-                            :disabled="index === day.attractions.length - 1"
-                          >
-                            ↓
-                          </a-button>
-                          <a-button
-                            size="small"
-                            danger
-                            @click="deleteAttraction(day.day_index, index)"
-                          >
-                            🗑️
-                          </a-button>
-                        </a-space>
-                      </template>
-
-                      <!-- 景点图片 -->
-                      <div class="attraction-image-wrapper">
-                        <img
-                          :src="getAttractionImage(item.name, index)"
-                          :alt="item.name"
-                          class="attraction-image"
-                          @error="handleImageError"
-                        />
-                        <div class="attraction-badge">
-                          <span class="badge-number">{{ index + 1 }}</span>
-                        </div>
-                        <div v-if="item.ticket_price" class="price-tag">
-                          ¥{{ item.ticket_price }}
-                        </div>
-                      </div>
-
-                      <!-- 编辑模式下可编辑的字段 -->
-                      <div v-if="editMode">
-                        <p><strong>地址:</strong></p>
-                        <a-input v-model:value="item.address" size="small" style="margin-bottom: 8px" />
-
-                        <p><strong>游览时长(分钟):</strong></p>
-                        <a-input-number v-model:value="item.visit_duration" :min="10" :max="480" size="small" style="width: 100%; margin-bottom: 8px" />
-
-                        <p><strong>描述:</strong></p>
-                        <a-textarea v-model:value="item.description" :rows="2" size="small" style="margin-bottom: 8px" />
-                      </div>
-
-                      <!-- 查看模式 -->
-                      <div v-else>
-                        <p><strong>地址:</strong> {{ item.address }}</p>
-                        <p><strong>游览时长:</strong> {{ item.visit_duration }}分钟</p>
-                        <p><strong>描述:</strong> {{ item.description }}</p>
-                        <p v-if="item.rating"><strong>评分:</strong> {{ item.rating }}⭐</p>
-                      </div>
-                    </a-card>
-                  </a-list-item>
-                </template>
-              </a-list>
-
-              <!-- 酒店推荐 -->
-              <a-divider v-if="day.hotel" orientation="left">🏨 住宿推荐</a-divider>
-              <a-card v-if="day.hotel" size="small" class="hotel-card">
-                <template #title>
-                  <span class="hotel-title">{{ day.hotel.name }}</span>
-                </template>
-                <a-descriptions :column="2" size="small">
-                  <a-descriptions-item label="地址">{{ day.hotel.address }}</a-descriptions-item>
-                  <a-descriptions-item label="类型">{{ day.hotel.type }}</a-descriptions-item>
-                  <a-descriptions-item label="价格范围">{{ day.hotel.price_range }}</a-descriptions-item>
-                  <a-descriptions-item label="评分">{{ day.hotel.rating }}⭐</a-descriptions-item>
-                  <a-descriptions-item label="距离" :span="2">{{ day.hotel.distance }}</a-descriptions-item>
-                </a-descriptions>
-              </a-card>
-
-              <!-- 餐饮安排 -->
-              <a-divider orientation="left">🍽️ 餐饮安排</a-divider>
-              <a-descriptions :column="1" bordered size="small">
-                <a-descriptions-item
-                  v-for="meal in day.meals"
-                  :key="meal.type"
-                  :label="getMealLabel(meal.type)"
-                >
-                  {{ meal.name }}
-                  <span v-if="meal.description"> - {{ meal.description }}</span>
-                </a-descriptions-item>
-              </a-descriptions>
-            </a-collapse-panel>
-          </a-collapse>
-        </a-card>
-
-        <a-card id="weather" v-if="tripPlan.weather_info && tripPlan.weather_info.length > 0" title="天气信息" style="margin-top: 20px" :bordered="false">
-        <a-list
-          :data-source="tripPlan.weather_info"
-          :grid="{ gutter: 16, column: 3 }"
+        <aside
+          class="rc-map"
+          :class="{ 'is-collapsed': isMobile && mapCollapsed }"
+          aria-label="行程地图"
         >
-          <template #renderItem="{ item }">
-            <a-list-item>
-              <a-card size="small" class="weather-card">
-                <div class="weather-date">{{ item.date }}</div>
-                <div class="weather-info-row">
-                  <span class="weather-icon">☀️</span>
-                  <div>
-                    <div class="weather-label">白天</div>
-                    <div class="weather-value">{{ item.day_weather }} {{ item.day_temp }}°C</div>
-                  </div>
-                </div>
-                <div class="weather-info-row">
-                  <span class="weather-icon">🌙</span>
-                  <div>
-                    <div class="weather-label">夜间</div>
-                    <div class="weather-value">{{ item.night_weather }} {{ item.night_temp }}°C</div>
-                  </div>
-                </div>
-                <div class="weather-wind">
-                  💨 {{ item.wind_direction }} {{ item.wind_power }}
-                </div>
-              </a-card>
-            </a-list-item>
-          </template>
-        </a-list>
-        </a-card>
+          <div class="map-head">
+            <h2 class="map-title">
+              地图
+              <span v-if="activeDay !== null" class="map-sub">
+                Day {{ (tripPlan.days[activeDay]?.day_index ?? activeDay) + 1 }}
+              </span>
+            </h2>
+            <a-button
+              v-if="isMobile"
+              type="link"
+              size="small"
+              @click="mapCollapsed = !mapCollapsed"
+            >
+              {{ mapCollapsed ? '展开' : '收起' }}
+            </a-button>
+          </div>
+
+          <div
+            class="map-box"
+            role="img"
+            :aria-label="`行程包含 ${totalAttractions} 个景点，左侧时间轴中有等价文字信息`"
+          >
+            <div id="amap-container" class="map-inner"></div>
+          </div>
+
+          <p v-if="mapError" class="map-error">{{ mapError }}</p>
+        </aside>
+      </div>
+
+      <!-- ---------------- 导出用的离屏完整视图 ----------------
+           分页之后可见区域一次只渲染一页，但「导出行程」要的是**整份** ——
+           否则点一下导出只拿到当前这一页。导出期间临时挂上这份视图
+           （见 withFullCapture），html2canvas 抓它，和分页前的长页内容一致。
+
+           离屏而不是 display:none：隐藏掉会让 html2canvas 量不到尺寸，
+           截出来是 0×0 的空白图（usePlanExport 里有同样的注释）。 -->
+      <div v-if="captureMode" class="capture-stage plan-capture-root" aria-hidden="true">
+        <OverviewPanel :plan="tripPlan" :knowledge="knowledgeSources" />
+        <DayTimeline v-for="(d, i) in tripPlan.days" :key="`cap-${i}`" :day="d" />
+        <!-- 地图位。用 data-export-map 而不是 id：真实地图已经占了 #amap-container -->
+        <div class="map-box" data-export-map></div>
       </div>
     </div>
 
-    <a-empty v-else description="没有找到旅行计划数据">
-      <template #image>
-        <div style="font-size: 80px;">🗺️</div>
-      </template>
-      <template #description>
-        <span style="color: #999;">暂无旅行计划数据,请先创建行程</span>
-      </template>
-      <a-button type="primary" @click="goBack">返回首页创建行程</a-button>
-    </a-empty>
+    <a-back-top :visibility-height="400" />
 
-    <!-- 回到顶部按钮 -->
-    <a-back-top :visibility-height="300">
-      <div class="back-top-button">
-        ↑
+    <!-- ---------------- 分享链接弹窗 ----------------
+         原来是复制失败时把 URL 塞进 message 里显示 8 秒 ——
+         长 URL 在 toast 里会折行成一团，且一闪而过。 -->
+    <a-modal v-model:open="shareOpen" title="分享这份行程" :footer="null" :width="520">
+      <p class="share-hint">拿到链接的人可以只读查看这份行程，不含编辑入口。</p>
+      <div class="share-row">
+        <a-input :value="shareUrl" readonly />
+        <a-button type="primary" @click="copyShareLink">复制</a-button>
       </div>
-    </a-back-top>
+    </a-modal>
+
+    <!-- ---------------- 未保存离开确认 ---------------- -->
+    <a-modal v-model:open="unsavedVisible" title="有未保存的修改" :footer="null" :width="420">
+      <p class="unsaved-text">离开后这次编辑的内容会丢失，确定要离开吗？</p>
+      <div class="unsaved-actions">
+        <a-button @click="cancelLeave">继续编辑</a-button>
+        <a-button danger @click="confirmLeave">放弃修改并离开</a-button>
+      </div>
+    </a-modal>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
-import { message } from 'ant-design-vue'
-import { DownOutlined } from '@ant-design/icons-vue'
-import AMapLoader from '@amap/amap-jsapi-loader'
-import html2canvas from 'html2canvas'
-import jsPDF from 'jspdf'
-import { API_BASE_URL, getPlan, updatePlan } from '@/services/api'
-import type { TripPlan } from '@/types'
-
-const route = useRoute()
-const router = useRouter()
-const tripPlan = ref<TripPlan | null>(null)
-const editMode = ref(false)
-const originalPlan = ref<TripPlan | null>(null)
-const attractionPhotos = ref<Record<string, string>>({})
-const activeSection = ref('overview')
-const activeDays = ref<number[]>([0]) // 默认展开第一天
-const saving = ref(false)
-let map: any = null
-
-/** 当前行程的 id。来自路由 /result/:id 或 /share/:id,没有则是空串。 */
-const planId = computed(() => (route.params.id as string) || '')
-
-/** 分享模式:只读。隐藏编辑入口。 */
-const isShareMode = computed(() => route.path.startsWith('/share'))
+import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue';
+import { useRoute, useRouter } from 'vue-router';
+import { message } from 'ant-design-vue';
+import {
+  ArrowLeftOutlined,
+  DownloadOutlined,
+  EditOutlined,
+  LinkOutlined,
+  SaveOutlined,
+} from '@ant-design/icons-vue';
+import AMapLoader from '@amap/amap-jsapi-loader';
+import StatePanel from '@/components/common/StatePanel.vue';
+import OverviewPanel from '@/components/plan/OverviewPanel.vue';
+import DayTimeline from '@/components/plan/DayTimeline.vue';
+import { usePlanCache } from '@/composables/usePlanCache';
+import { usePlanExport } from '@/composables/usePlanExport';
+import { useScreen } from '@/composables/useScreen';
+import { useUnsavedGuard } from '@/composables/useUnsavedGuard';
+import { getPlan, updatePlan } from '@/services/api';
+import type {
+  Attraction,
+  KnowledgeSource,
+  PlanSummary,
+  TripPlan,
+  WeatherInfo,
+} from '@/types';
 
 /**
- * 把一份行程渲染出来:存好数据 → 拉景点图 → 等 DOM → 初始化地图。
+ * 行程详情。
  *
- * 抽成函数是因为现在有两个入口要渲染(接口取回 / sessionStorage 缓存),
- * 之前这段逻辑内联在 onMounted 里,复制一份迟早会漂移。
+ * 三种到达方式（与 CLAUDE.md 记录的保持一致）：
+ *   1. /result/{id}  从后端取（刷新、换标签页、分享都走这条）
+ *   2. /result       回落到 sessionStorage（兼容旧路径）
+ *   3. /share/{id}   同一组件，只读
+ *
+ * ## 布局：Tab 分页 + 右侧常驻地图
+ *
+ * 改造前是一个**超长页面**：概览、预算、地图、每日行程、天气、知识出处全部竖着摞，
+ * 多天行程只能靠滚。现在按参考产品改成：
+ *   顶部 Tab（总览 / Day 1 / Day 2 …）+ 左边内容 + 右边地图常驻。
+ *
+ * 这么改还有一个实际好处：**地图不用滚回去找了**。
+ * 切换 Tab 时地图会跟着聚焦到那一天的景点（见 focusDay）。
+ *
+ * Tab 状态记在 `?day=N` 上（不写 = 总览）：刷新、收藏、分享链接都落在同一页。
+ * 切页用 `router.replace`，所以浏览器的返回键是"离开这个行程"而不是"退回上一个 Tab" ——
+ * 5 天的行程不该让人连按 5 次返回才走得掉。
  */
-async function renderPlan(plan: TripPlan) {
-  tripPlan.value = plan
-  attractionPhotos.value = {}
 
-  await loadAttractionPhotos()
+const route = useRoute();
+const router = useRouter();
+const { isMobile } = useScreen();
+const planCache = usePlanCache();
+const { exportImage, exportPdf } = usePlanExport();
 
-  // 先拆掉旧地图再重建。重复 initMap 会在同一个容器上叠加实例,
-  // 表现为标记点重影、点击弹出的信息窗对应不上。
-  if (map) {
-    map.destroy()
-    map = null
-  }
+const tripPlan = ref<TripPlan | null>(null);
+const meta = ref<PlanSummary | null>(null);
+/** 这次生成用到的知识出处。为空时总览页不显示那一块 */
+const knowledgeSources = ref<KnowledgeSource[]>([]);
 
-  await nextTick()
-  initMap()
+type ViewState = 'loading' | 'ready' | 'error';
+const state = ref<ViewState>('loading');
+const errorKind = ref<'network' | 'server' | 'notFound' | 'business'>('network');
+const errorDetail = ref('');
+
+const editMode = ref(false);
+const saving = ref(false);
+const originalPlan = ref<TripPlan | null>(null);
+
+const shareOpen = ref(false);
+const mapCollapsed = ref(false);
+const mapError = ref('');
+
+let map: any = null;
+let AMapRef: any = null;
+/** 按天分组的标记，供 focusDay 用 */
+const dayMarkers = new Map<number, any[]>();
+
+const planId = computed(() => (route.params.id as string) || '');
+const isShareMode = computed(() => route.path.startsWith('/share'));
+const shareUrl = computed(() => `${window.location.origin}/share/${planId.value}`);
+
+const totalAttractions = computed(
+  () => tripPlan.value?.days?.reduce((n, d) => n + (d.attractions?.length || 0), 0) ?? 0
+);
+
+/**
+ * 当前 Tab：null = 总览；数字 = 第几天（0 起）。
+ * 从地址栏读，所以刷新、前进后退都保持在同一页。
+ */
+const activeDay = computed<number | null>(() => {
+  const raw = route.query.day;
+  if (raw === undefined || raw === '') return null;
+
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < 0) return null;
+
+  // 越界的 day 当成总览，避免手改地址栏把页面搞崩
+  const days = tripPlan.value?.days?.length ?? 0;
+  return n < days ? n : null;
+});
+
+function setDay(index: number | null) {
+  router.replace({ query: index === null ? {} : { day: String(index) } });
+
+  if (index !== null) void focusDay(index);
+
+  // 换页后回到页首。
+  // 不这么做的话：从很长的 Day 1 切到很短的 Day 3 时，原滚动位置超出新内容的长度，
+  // 浏览器会把它钳到新内容的底部 —— 用户一进来看到的是行程的结尾。
+  // 只有真的滚下去了才动，免得在页首点 Tab 时多一次无谓的滚动动画。
+  nextTick(() => {
+    if (window.scrollY > 0) window.scrollTo({ top: 0, behavior: 'smooth' });
+  });
 }
 
-onMounted(async () => {
-  const id = route.params.id as string | undefined
+/* ---------------- 天气（Tab 上的一小片提示） ---------------- */
 
-  // ---- 路径 1:带 id,从后端取(刷新、换标签页、分享链接都走这条) ----
+const weatherOf = (date: string): WeatherInfo | undefined =>
+  tripPlan.value?.weather_info?.find((w) => w.date === date);
+
+/**
+ * Tab 上那行天气小字。天气文案塞不进 Tab，只取两三个字。
+ *
+ * 这里**返回空串而不是 undefined** —— 模板里 `v-if` 和插值是两个独立的表达式，
+ * TypeScript 无法跨它们做类型收窄，传 `WeatherInfo | undefined` 进 `shortWeather`
+ * 会直接报 TS2345。让它自己处理"没有这天的天气"，模板就只需要判断一次。
+ */
+function tabWeather(date: string): string {
+  const text = weatherOf(date)?.day_weather || '';
+  return text.length > 4 ? text.slice(0, 4) : text;
+}
+
+/* ---------------- 未保存保护 ---------------- */
+
+/** 编辑模式下只要进过编辑态就视为脏 —— 逐字段比对成本高于收益 */
+const isDirty = computed(() => editMode.value);
+
+const {
+  visible: unsavedVisible,
+  confirmLeave,
+  cancelLeave,
+} = useUnsavedGuard(() => isDirty.value);
+
+/* ---------------- 加载 ---------------- */
+
+async function renderPlan(plan: TripPlan) {
+  tripPlan.value = plan;
+
+  // 必须先切到 ready，地图容器才会被渲染出来 —— initMap() 依赖 #amap-container 在 DOM 里。
+  // （原实现把 state 设在 renderPlan 返回之后，导致 initMap 时容器还不存在，
+  //   而 initMap 开头有个静默 return，于是地图永远不初始化、也不报错。）
+  state.value = 'ready';
+
+  if (map) {
+    map.destroy();
+    map = null;
+  }
+  dayMarkers.clear();
+
+  await nextTick();
+  await initMap();
+}
+
+async function load() {
+  const id = route.params.id as string | undefined;
+  state.value = 'loading';
+  errorDetail.value = '';
+
+  // ---- 路径 1：带 id，从后端取 ----
   if (id) {
     try {
-      const res = await getPlan(id)
+      const res = await getPlan(id);
       if (res.success && res.data) {
-        await renderPlan(res.data)
-        return
+        meta.value = res.meta || null;
+        // 知识出处跟着详情一起回来。没开 RAG / 没命中时后端给空数组
+        knowledgeSources.value = res.knowledge || [];
+        await renderPlan(res.data);
+        return;
       }
-      // 后端对 status='running' 的行程会返回 success=false 而不是报错
-      message.error(res.message || '该行程尚未生成完成')
-    } catch (e: any) {
-      message.error(e.message || '行程不存在或已被删除')
+      // 后端对 status='running' 的行程返回 success=false 而**不是** HTTP 错误
+      errorKind.value = 'business';
+      errorDetail.value = res.message || '该行程尚未生成完成';
+      state.value = 'error';
+    } catch (e: unknown) {
+      const msg = (e as Error)?.message || '读取行程失败';
+      errorKind.value = msg.includes('不存在') ? 'notFound' : 'network';
+      errorDetail.value = msg;
+      state.value = 'error';
     }
-    // 取不到就回首页,不要留一个白屏
-    router.replace('/')
-    return
+    return;
   }
 
-  // ---- 路径 2:没带 id,回落到 sessionStorage(兼容旧的 /result) ----
-  const raw = sessionStorage.getItem('tripPlan')
-  if (!raw) {
-    router.replace('/')
-    return
+  // ---- 路径 2：无 id，回落本地缓存 ----
+  const cached = planCache.load();
+  if (!cached) {
+    router.replace('/');
+    return;
   }
+  await renderPlan(cached);
+}
 
-  try {
-    await renderPlan(JSON.parse(raw))
-  } catch (e) {
-    // 坏数据必须清掉:否则每次进这个页面都在同一个地方崩,永远出不来
-    console.error('本地缓存的行程解析失败:', e)
-    sessionStorage.removeItem('tripPlan')
-    message.error('本地缓存的行程已损坏,请重新生成')
-    router.replace('/')
-  }
-})
+onMounted(load);
 
-// 组件卸载时销毁地图,否则每次进出页面都泄漏一个高德地图实例
 onUnmounted(() => {
-  map?.destroy()
-  map = null
-})
+  map?.destroy();
+  map = null;
+});
 
-const goBack = () => {
-  router.push('/')
+/* ---------------- 编辑 ---------------- */
+
+function toggleEdit() {
+  editMode.value = true;
+  originalPlan.value = JSON.parse(JSON.stringify(tripPlan.value));
+  message.info('已进入编辑模式，改动需点「保存修改」才会写入');
 }
 
-// 滚动到指定区域
-const scrollToSection = ({ key }: { key: string }) => {
-  activeSection.value = key
-  const element = document.getElementById(key)
-  if (element) {
-    element.scrollIntoView({ behavior: 'smooth', block: 'start' })
-  }
-}
+async function saveChanges() {
+  if (!tripPlan.value) return;
+  saving.value = true;
 
-// 切换编辑模式
-const toggleEditMode = () => {
-  editMode.value = true
-  // 保存原始数据用于取消编辑
-  originalPlan.value = JSON.parse(JSON.stringify(tripPlan.value))
-  message.info('进入编辑模式')
-}
-
-// 保存修改
-const saveChanges = async () => {
-  if (!tripPlan.value) return
-
-  editMode.value = false
-
-  // 有 id 就回写后端(刷新/换设备都在),没有则只能存本地缓存
-  if (planId.value) {
-    saving.value = true
-    try {
-      await updatePlan(planId.value, tripPlan.value)
-      message.success('修改已保存')
-    } catch (e: any) {
-      // 没存上就不能假装成功 —— 退回编辑态,让用户知道改动还在手上
-      message.error(e.message || '保存失败,请重试')
-      editMode.value = true
-      return
-    } finally {
-      saving.value = false
-    }
-  } else {
-    message.success('修改已保存(仅保存在本标签页)')
-  }
-
-  sessionStorage.setItem('tripPlan', JSON.stringify(tripPlan.value))
-
-  // 重新初始化地图以反映更改
-  if (map) {
-    map.destroy()
-    map = null
-  }
-  nextTick(() => {
-    initMap()
-  })
-}
-
-// 复制分享链接
-const copyShareLink = async () => {
-  const url = `${window.location.origin}/share/${planId.value}`
   try {
-    await navigator.clipboard.writeText(url)
-    message.success('分享链接已复制')
-  } catch {
-    // 非 HTTPS 或浏览器不给剪贴板权限时会走到这里。
-    // 与其静默失败,不如把链接显示出来让用户自己复制。
-    message.info(url, 8)
+    if (planId.value) {
+      await updatePlan(planId.value, tripPlan.value);
+      message.success('修改已保存');
+    } else {
+      message.success('修改已保存（仅在本标签页，刷新后丢失）');
+    }
+    planCache.save(tripPlan.value);
+    editMode.value = false;
+
+    // 景点可能被增删，地图要跟着变
+    rebuildMarkers();
+  } catch (e: unknown) {
+    // 没存上就不能假装成功 —— 保持编辑态，让用户知道改动还在手上
+    message.error((e as Error)?.message || '保存失败，请重试');
+  } finally {
+    saving.value = false;
   }
 }
 
-// 取消编辑
-const cancelEdit = () => {
+function cancelEdit() {
   if (originalPlan.value) {
-    tripPlan.value = JSON.parse(JSON.stringify(originalPlan.value))
+    tripPlan.value = JSON.parse(JSON.stringify(originalPlan.value));
   }
-  editMode.value = false
-  message.info('已取消编辑')
+  editMode.value = false;
+  message.info('已取消编辑');
 }
 
-// 删除景点
-const deleteAttraction = (dayIndex: number, attrIndex: number) => {
-  if (!tripPlan.value) return
+/* ---------------- 撤销栈（删除景点） ---------------- */
 
-  const day = tripPlan.value.days[dayIndex]
+const undoState = ref<{ dayIndex: number; index: number; name: string; item: Attraction } | null>(
+  null
+);
+let undoTimer: ReturnType<typeof setTimeout> | null = null;
+
+/** DayTimeline 里改了顺序或字段 —— 重建标记（顺序变了，编号也得变） */
+function onDayChanged() {
+  rebuildMarkers();
+}
+
+/**
+ * 删除景点。**由父组件执行**，因为这三件事都只有这里能做：
+ * 撤销栈、全局 message、地图标记重建。
+ * 子组件只负责 emit「用户点了删除」。
+ */
+function onRemoveAttraction(index: number) {
+  const dayIndex = activeDay.value;
+  if (dayIndex === null) return;
+
+  const day = tripPlan.value?.days?.[dayIndex];
+  if (!day) return;
+
   if (day.attractions.length <= 1) {
-    message.warning('每天至少需要保留一个景点')
-    return
+    // 每天至少留一个景点 —— 说明原因，而不是静默拒绝
+    message.warning('每天至少需要保留一个景点');
+    return;
   }
 
-  day.attractions.splice(attrIndex, 1)
-  message.success('景点已删除')
+  const [removed] = day.attractions.splice(index, 1);
+  pushUndo(dayIndex, index, removed);
+  rebuildMarkers();
 }
 
-// 移动景点顺序
-const moveAttraction = (dayIndex: number, attrIndex: number, direction: 'up' | 'down') => {
-  if (!tripPlan.value) return
+/** 把删除记进撤销栈，给 8 秒反悔窗口 */
+function pushUndo(dayIndex: number, index: number, item: Attraction) {
+  undoState.value = { dayIndex, index, name: item.name, item };
+  if (undoTimer) clearTimeout(undoTimer);
+  undoTimer = setTimeout(() => {
+    undoState.value = null;
+  }, 8000);
+}
 
-  const day = tripPlan.value.days[dayIndex]
-  const attractions = day.attractions
-
-  if (direction === 'up' && attrIndex > 0) {
-    [attractions[attrIndex], attractions[attrIndex - 1]] = [attractions[attrIndex - 1], attractions[attrIndex]]
-  } else if (direction === 'down' && attrIndex < attractions.length - 1) {
-    [attractions[attrIndex], attractions[attrIndex + 1]] = [attractions[attrIndex + 1], attractions[attrIndex]]
+function undoDelete() {
+  const snapshot = undoState.value;
+  if (!snapshot) return;
+  const day = tripPlan.value?.days?.[snapshot.dayIndex];
+  if (day) {
+    day.attractions.splice(snapshot.index, 0, snapshot.item);
+    rebuildMarkers();
   }
+  undoState.value = null;
+  if (undoTimer) clearTimeout(undoTimer);
 }
 
-const getMealLabel = (type: string): string => {
-  const labels: Record<string, string> = {
-    breakfast: '早餐',
-    lunch: '午餐',
-    dinner: '晚餐',
-    snack: '小吃'
-  }
-  return labels[type] || type
-}
+/* ---------------- 导出 ---------------- */
 
-// 加载所有景点图片
-const loadAttractionPhotos = async () => {
-  if (!tripPlan.value) return
+/**
+ * 导出期间临时挂上的「完整行程」离屏视图。
+ *
+ * 为什么需要它：分页把一次滚动的长页拆成了多页，而 `usePlanExport` 抓的是
+ * `.plan-capture-root` 的 innerHTML —— 分页后那就是**当前这一页**，
+ * 用户点「导出为 PDF」只会拿到 Day 2 一页，这是分页改造引入的副作用。
+ *
+ * 所以导出前把整份行程渲染到离屏容器里，让导出抓它；导出结束立刻卸掉。
+ * 日常渲染完全不受影响（没有额外的一直存在的 DOM）。
+ */
+const captureMode = ref(false);
 
-  const promises: Promise<void>[] = []
-
-  tripPlan.value.days.forEach(day => {
-    day.attractions.forEach(attraction => {
-      const promise = fetch(`${API_BASE_URL}/api/poi/photo?name=${encodeURIComponent(attraction.name)}`)
-        .then(res => res.json())
-        .then(data => {
-          if (data.success && data.data.photo_url) {
-            attractionPhotos.value[attraction.name] = data.data.photo_url
-          }
-        })
-        .catch(err => {
-          console.error(`获取${attraction.name}图片失败:`, err)
-        })
-
-      promises.push(promise)
-    })
-  })
-
-  await Promise.all(promises)
-}
-
-// 获取景点图片
-const getAttractionImage = (name: string, index: number): string => {
-  // 如果已加载真实图片,返回真实图片
-  if (attractionPhotos.value[name]) {
-    return attractionPhotos.value[name]
-  }
-
-  // 返回一个纯色占位图(避免跨域问题)
-  const colors = [
-    { start: '#667eea', end: '#764ba2' },
-    { start: '#f093fb', end: '#f5576c' },
-    { start: '#4facfe', end: '#00f2fe' },
-    { start: '#43e97b', end: '#38f9d7' },
-    { start: '#fa709a', end: '#fee140' }
-  ]
-  const colorIndex = index % colors.length
-  const { start, end } = colors[colorIndex]
-
-  // 使用base64编码避免中文问题
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300">
-    <defs>
-      <linearGradient id="grad${index}" x1="0%" y1="0%" x2="100%" y2="100%">
-        <stop offset="0%" style="stop-color:${start};stop-opacity:1" />
-        <stop offset="100%" style="stop-color:${end};stop-opacity:1" />
-      </linearGradient>
-    </defs>
-    <rect width="400" height="300" fill="url(#grad${index})"/>
-    <text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle" font-family="sans-serif" font-size="24" font-weight="bold" fill="white">${name}</text>
-  </svg>`
-
-  return `data:image/svg+xml;base64,${btoa(unescape(encodeURIComponent(svg)))}`
-}
-
-// 图片加载失败时的处理
-const handleImageError = (event: Event) => {
-  const img = event.target as HTMLImageElement
-  // 使用灰色占位图
-  img.src = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="400" height="300"%3E%3Crect width="400" height="300" fill="%23f0f0f0"/%3E%3Ctext x="50%25" y="50%25" dominant-baseline="middle" text-anchor="middle" font-family="sans-serif" font-size="18" fill="%23999"%3E图片加载失败%3C/text%3E%3C/svg%3E'
-}
-
-
-
-// 导出为图片
-const exportAsImage = async () => {
+async function withFullCapture<T>(run: () => Promise<T>): Promise<T> {
+  captureMode.value = true;
+  await nextTick(); // 等离屏视图进 DOM —— 导出靠 querySelector 找它
   try {
-    message.loading({ content: '正在生成图片...', key: 'export', duration: 0 })
-
-    const element = document.querySelector('.main-content') as HTMLElement
-    if (!element) {
-      throw new Error('未找到内容元素')
-    }
-
-    // 创建一个独立的容器
-    const exportContainer = document.createElement('div')
-    exportContainer.style.width = element.offsetWidth + 'px'
-    exportContainer.style.backgroundColor = '#f5f7fa'
-    exportContainer.style.padding = '20px'
-
-    // 复制所有内容
-    exportContainer.innerHTML = element.innerHTML
-
-    // 处理地图截图
-    const mapContainer = document.getElementById('amap-container')
-    if (mapContainer && map) {
-      const mapCanvas = mapContainer.querySelector('canvas')
-      if (mapCanvas) {
-        const mapSnapshot = mapCanvas.toDataURL('image/png')
-        const exportMapContainer = exportContainer.querySelector('#amap-container')
-        if (exportMapContainer) {
-          exportMapContainer.innerHTML = `<img src="${mapSnapshot}" style="width:100%;height:100%;object-fit:cover;" />`
-        }
-      }
-    }
-
-    // 移除所有ant-card类,替换为纯div
-    const cards = exportContainer.querySelectorAll('.ant-card')
-    cards.forEach((card) => {
-      const cardEl = card as HTMLElement
-      try {
-        cardEl.className = '' // 移除所有类
-        cardEl.style.setProperty('background-color', '#ffffff')
-        cardEl.style.setProperty('border-radius', '12px')
-        cardEl.style.setProperty('box-shadow', '0 4px 12px rgba(0, 0, 0, 0.1)')
-        cardEl.style.setProperty('margin-bottom', '20px')
-        cardEl.style.setProperty('overflow', 'hidden')
-      } catch (err) {
-        console.error('设置卡片样式失败:', err)
-      }
-    })
-
-    // 处理卡片头部
-    const cardHeads = exportContainer.querySelectorAll('.ant-card-head')
-    cardHeads.forEach((head) => {
-      const headEl = head as HTMLElement
-      try {
-        headEl.style.setProperty('background-color', '#667eea')
-        headEl.style.setProperty('color', '#ffffff')
-        headEl.style.setProperty('padding', '16px 24px')
-        headEl.style.setProperty('font-size', '18px')
-        headEl.style.setProperty('font-weight', '600')
-      } catch (err) {
-        console.error('设置卡片头部样式失败:', err)
-      }
-    })
-
-    // 处理卡片内容
-    const cardBodies = exportContainer.querySelectorAll('.ant-card-body')
-    cardBodies.forEach((body) => {
-      const bodyEl = body as HTMLElement
-      bodyEl.style.setProperty('background-color', '#ffffff')
-      bodyEl.style.setProperty('padding', '24px')
-    })
-
-    // 处理酒店卡片头部
-    const hotelCards = exportContainer.querySelectorAll('.hotel-card')
-    hotelCards.forEach((card) => {
-      const head = card.querySelector('.ant-card-head') as HTMLElement
-      if (head) {
-        head.style.setProperty('background-color', '#1976d2')
-      }
-      (card as HTMLElement).style.setProperty('background-color', '#e3f2fd')
-    })
-
-    // 处理天气卡片
-    const weatherCards = exportContainer.querySelectorAll('.weather-card')
-    weatherCards.forEach((card) => {
-      (card as HTMLElement).style.setProperty('background-color', '#e0f7fa')
-    })
-
-    // 处理预算总计
-    const budgetTotal = exportContainer.querySelector('.budget-total')
-    if (budgetTotal) {
-      const el = budgetTotal as HTMLElement
-      el.style.setProperty('background-color', '#667eea')
-      el.style.setProperty('color', '#ffffff')
-      el.style.setProperty('padding', '20px')
-      el.style.setProperty('border-radius', '12px')
-      el.style.setProperty('margin-bottom', '20px')
-    }
-
-    // 处理预算项
-    const budgetItems = exportContainer.querySelectorAll('.budget-item')
-    budgetItems.forEach((item) => {
-      const el = item as HTMLElement
-      el.style.setProperty('background-color', '#f5f7fa')
-      el.style.setProperty('padding', '16px')
-      el.style.setProperty('border-radius', '8px')
-      el.style.setProperty('margin-bottom', '12px')
-    })
-
-    // 添加到body(隐藏)
-    exportContainer.style.position = 'absolute'
-    exportContainer.style.left = '-9999px'
-    document.body.appendChild(exportContainer)
-
-    const canvas = await html2canvas(exportContainer, {
-      backgroundColor: '#f5f7fa',
-      scale: 2,
-      logging: false,
-      useCORS: true,
-      allowTaint: true
-    })
-
-    // 移除容器
-    document.body.removeChild(exportContainer)
-
-    // 转换为图片并下载
-    const link = document.createElement('a')
-    link.download = `旅行计划_${tripPlan.value?.city}_${new Date().getTime()}.png`
-    link.href = canvas.toDataURL('image/png')
-    link.click()
-
-    message.success({ content: '图片导出成功!', key: 'export' })
-  } catch (error: any) {
-    console.error('导出图片失败:', error)
-    message.error({ content: `导出图片失败: ${error.message}`, key: 'export' })
+    return await run();
+  } finally {
+    captureMode.value = false;
   }
 }
 
-// 导出为PDF
-const exportAsPDF = async () => {
+const onExportImage = () => withFullCapture(() => exportImage(tripPlan.value?.city || '行程'));
+
+const onExportPdf = () => withFullCapture(() => exportPdf(tripPlan.value?.city || '行程'));
+
+async function copyShareLink() {
   try {
-    message.loading({ content: '正在生成PDF...', key: 'export', duration: 0 })
-
-    const element = document.querySelector('.main-content') as HTMLElement
-    if (!element) {
-      throw new Error('未找到内容元素')
-    }
-
-    // 创建一个独立的容器
-    const exportContainer = document.createElement('div')
-    exportContainer.style.width = element.offsetWidth + 'px'
-    exportContainer.style.backgroundColor = '#f5f7fa'
-    exportContainer.style.padding = '20px'
-
-    // 复制所有内容
-    exportContainer.innerHTML = element.innerHTML
-
-    // 处理地图截图
-    const mapContainer = document.getElementById('amap-container')
-    if (mapContainer && map) {
-      const mapCanvas = mapContainer.querySelector('canvas')
-      if (mapCanvas) {
-        const mapSnapshot = mapCanvas.toDataURL('image/png')
-        const exportMapContainer = exportContainer.querySelector('#amap-container')
-        if (exportMapContainer) {
-          exportMapContainer.innerHTML = `<img src="${mapSnapshot}" style="width:100%;height:100%;object-fit:cover;" />`
-        }
-      }
-    }
-
-    // 移除所有ant-card类,替换为纯div
-    const cards = exportContainer.querySelectorAll('.ant-card')
-    cards.forEach((card) => {
-      const cardEl = card as HTMLElement
-      try {
-        cardEl.className = ''
-        cardEl.style.setProperty('background-color', '#ffffff')
-        cardEl.style.setProperty('border-radius', '12px')
-        cardEl.style.setProperty('box-shadow', '0 4px 12px rgba(0, 0, 0, 0.1)')
-        cardEl.style.setProperty('margin-bottom', '20px')
-        cardEl.style.setProperty('overflow', 'hidden')
-      } catch (err) {
-        console.error('设置卡片样式失败:', err)
-      }
-    })
-
-    // 处理卡片头部
-    const cardHeads = exportContainer.querySelectorAll('.ant-card-head')
-    cardHeads.forEach((head) => {
-      const headEl = head as HTMLElement
-      try {
-        headEl.style.setProperty('background-color', '#667eea')
-        headEl.style.setProperty('color', '#ffffff')
-        headEl.style.setProperty('padding', '16px 24px')
-        headEl.style.setProperty('font-size', '18px')
-        headEl.style.setProperty('font-weight', '600')
-      } catch (err) {
-        console.error('设置卡片头部样式失败:', err)
-      }
-    })
-
-    // 处理卡片内容
-    const cardBodies = exportContainer.querySelectorAll('.ant-card-body')
-    cardBodies.forEach((body) => {
-      const bodyEl = body as HTMLElement
-      bodyEl.style.setProperty('background-color', '#ffffff')
-      bodyEl.style.setProperty('padding', '24px')
-    })
-
-    // 处理酒店卡片头部
-    const hotelCards = exportContainer.querySelectorAll('.hotel-card')
-    hotelCards.forEach((card) => {
-      const head = card.querySelector('.ant-card-head') as HTMLElement
-      if (head) {
-        head.style.setProperty('background-color', '#1976d2')
-      }
-      (card as HTMLElement).style.setProperty('background-color', '#e3f2fd')
-    })
-
-    // 处理天气卡片
-    const weatherCards = exportContainer.querySelectorAll('.weather-card')
-    weatherCards.forEach((card) => {
-      (card as HTMLElement).style.setProperty('background-color', '#e0f7fa')
-    })
-
-    // 处理预算总计
-    const budgetTotal = exportContainer.querySelector('.budget-total')
-    if (budgetTotal) {
-      const el = budgetTotal as HTMLElement
-      el.style.setProperty('background-color', '#667eea')
-      el.style.setProperty('color', '#ffffff')
-      el.style.setProperty('padding', '20px')
-      el.style.setProperty('border-radius', '12px')
-      el.style.setProperty('margin-bottom', '20px')
-    }
-
-    // 处理预算项
-    const budgetItems = exportContainer.querySelectorAll('.budget-item')
-    budgetItems.forEach((item) => {
-      const el = item as HTMLElement
-      el.style.setProperty('background-color', '#f5f7fa')
-      el.style.setProperty('padding', '16px')
-      el.style.setProperty('border-radius', '8px')
-      el.style.setProperty('margin-bottom', '12px')
-    })
-
-    // 添加到body(隐藏)
-    exportContainer.style.position = 'absolute'
-    exportContainer.style.left = '-9999px'
-    document.body.appendChild(exportContainer)
-
-    const canvas = await html2canvas(exportContainer, {
-      backgroundColor: '#f5f7fa',
-      scale: 2,
-      logging: false,
-      useCORS: true,
-      allowTaint: true
-    })
-
-    // 移除容器
-    document.body.removeChild(exportContainer)
-
-    const imgData = canvas.toDataURL('image/png')
-    const pdf = new jsPDF({
-      orientation: 'portrait',
-      unit: 'mm',
-      format: 'a4'
-    })
-
-    const imgWidth = 210 // A4宽度(mm)
-    const imgHeight = (canvas.height * imgWidth) / canvas.width
-
-    // 如果内容高度超过一页,分页处理
-    let heightLeft = imgHeight
-    let position = 0
-
-    pdf.addImage(imgData, 'PNG', 0, position, imgWidth, imgHeight)
-    heightLeft -= 297 // A4高度
-
-    while (heightLeft > 0) {
-      position = heightLeft - imgHeight
-      pdf.addPage()
-      pdf.addImage(imgData, 'PNG', 0, position, imgWidth, imgHeight)
-      heightLeft -= 297
-    }
-
-    pdf.save(`旅行计划_${tripPlan.value?.city}_${new Date().getTime()}.pdf`)
-
-    message.success({ content: 'PDF导出成功!', key: 'export' })
-  } catch (error: any) {
-    console.error('导出PDF失败:', error)
-    message.error({ content: `导出PDF失败: ${error.message}`, key: 'export' })
+    await navigator.clipboard.writeText(shareUrl.value);
+    message.success('链接已复制');
+    shareOpen.value = false;
+  } catch {
+    // 非 HTTPS 或浏览器不给剪贴板权限。链接已经在弹窗的输入框里了，
+    // 用户可以手动选中复制，不用再想办法把 URL 塞进 toast。
+    message.info('当前浏览器不允许自动复制，请手动选中链接复制');
   }
 }
 
-// 初始化地图
-const initMap = async () => {
+const goBack = () => router.push('/');
+const goHistory = () => router.push('/history');
+
+/* ---------------- 地图 ---------------- */
+
+function collectAttractions(dayIndex?: number) {
+  const out: Array<Attraction & { dayIndex: number; attrIndex: number }> = [];
+  tripPlan.value?.days?.forEach((day, di) => {
+    if (dayIndex !== undefined && di !== dayIndex) return;
+    day.attractions?.forEach((a, attrIndex) => {
+      if (a.location?.longitude && a.location?.latitude) {
+        out.push({ ...a, dayIndex: di, attrIndex });
+      }
+    });
+  });
+  return out;
+}
+
+/** 建标记。抽取出来是为了"编辑后重建"和"初次初始化"共用一份 */
+function rebuildMarkers() {
+  if (!map || !AMapRef) return;
+
+  map.clearMap();
+  dayMarkers.clear();
+
+  const AMap = AMapRef;
+  const all = collectAttractions();
+
+  all.forEach((a) => {
+    const marker = new AMap.Marker({
+      position: [a.location.longitude, a.location.latitude],
+      title: a.name,
+      label: {
+        content: `<div style="background:#0e7490;color:#fff;padding:2px 7px;border-radius:10px;font-size:12px;">${a.attrIndex + 1}</div>`,
+        offset: new AMap.Pixel(0, -28),
+      },
+    });
+
+    const infoWindow = new AMap.InfoWindow({
+      content: `<div style="padding:10px;max-width:260px;">
+          <h4 style="margin:0 0 6px;">${escapeHtml(a.name)}</h4>
+          <p style="margin:4px 0;"><strong>地址：</strong>${escapeHtml(a.address || '—')}</p>
+          <p style="margin:4px 0;"><strong>游览时长：</strong>${a.visit_duration} 分钟</p>
+          <p style="margin:4px 0;color:#0e7490;">第 ${a.dayIndex + 1} 天 · 第 ${a.attrIndex + 1} 个</p>
+        </div>`,
+      offset: new AMap.Pixel(0, -28),
+    });
+
+    marker.on('click', () => infoWindow.open(map, marker.getPosition()));
+
+    const list = dayMarkers.get(a.dayIndex) ?? [];
+    list.push(marker);
+    dayMarkers.set(a.dayIndex, list);
+    map.add(marker);
+  });
+
+  // 每天一条折线
+  const byDay = new Map<number, typeof all>();
+  all.forEach((a) => {
+    const list = byDay.get(a.dayIndex) ?? [];
+    list.push(a);
+    byDay.set(a.dayIndex, list);
+  });
+  byDay.forEach((list) => {
+    if (list.length < 2) return;
+    map.add(
+      new AMap.Polyline({
+        path: list.map((a) => [a.location.longitude, a.location.latitude]),
+        strokeColor: '#0e7490',
+        strokeWeight: 4,
+        strokeOpacity: 0.75,
+        showDir: true,
+      })
+    );
+  });
+}
+
+async function initMap() {
+  const container = document.getElementById('amap-container');
+  if (!container) {
+    // 不静默 return：正是「什么都不做、也不报错」让曾经的时序 bug 藏了很久
+    mapError.value = '地图容器未就绪，请刷新页面重试。';
+    console.error('initMap: 未找到 #amap-container，已跳过地图初始化');
+    return;
+  }
+
+  mapError.value = '';
+  const points = collectAttractions();
+
+  // 高德 2021-12 之后申请的 key 需要配套的安全密钥，否则会报 INVALID_USER_SCODE。
+  // 必须在 AMapLoader.load() **之前**设置才生效；没配就不设（老 key 不需要）。
+  const securityCode = import.meta.env.VITE_AMAP_SECURITY_CODE;
+  if (securityCode) {
+    (
+      window as unknown as { _AMapSecurityConfig?: { securityJsCode: string } }
+    )._AMapSecurityConfig = { securityJsCode: securityCode };
+  }
+
   try {
     const AMap = await AMapLoader.load({
-      key: import.meta.env.VITE_AMAP_WEB_JS_KEY,  // 高德地图Web端(JS API) Key
+      key: import.meta.env.VITE_AMAP_WEB_JS_KEY,
       version: '2.0',
-      plugins: ['AMap.Marker', 'AMap.Polyline', 'AMap.InfoWindow']
-    })
+      plugins: ['AMap.Marker', 'AMap.Polyline', 'AMap.InfoWindow'],
+    });
+    AMapRef = AMap;
 
-    // 创建地图实例
-    map = new AMap.Map('amap-container', {
-      zoom: 12,
-      center: [116.397128, 39.916527], // 默认中心点(北京)
-      viewMode: '3D'
-    })
+    // 首屏中心点用行程里的第一个景点，而不是硬编码北京
+    const first = points[0];
+    const center: [number, number] = first
+      ? [first.location.longitude, first.location.latitude]
+      : [116.397128, 39.916527];
 
-    // 添加景点标记
-    addAttractionMarkers(AMap)
+    map = new AMap.Map('amap-container', { zoom: 12, center, viewMode: '3D' });
 
-    message.success('地图加载成功')
-  } catch (error) {
-    console.error('地图加载失败:', error)
-    message.error('地图加载失败')
+    rebuildMarkers();
+
+    const all = Array.from(dayMarkers.values()).flat();
+    if (all.length) map.setFitView(all);
+
+    // 如果地址栏本来就带着 ?day=N，进去就聚焦那一天
+    if (activeDay.value !== null) void focusDay(activeDay.value);
+  } catch (e: unknown) {
+    // 地图加载失败不该弹全局 toast（用户是来看行程的，不是来看地图报错的），
+    // 在卡片内给一行说明即可。错误码原样带出来 —— 它区分了四种完全不同的故障：
+    //   INVALID_USER_KEY / INVALID_USER_DOMAIN / USER_KEY_PLAT_NOMATCH / INVALID_USER_SCODE
+    console.error('地图加载失败:', e);
+    const info = (e as { info?: string })?.info || (e as Error)?.message || '';
+    mapError.value = info
+      ? `地图加载失败：${info}`
+      : '地图加载失败。请确认 frontend/.env 里已配置高德 Web端(JS API) 的 Key。';
   }
 }
 
-// 添加景点标记
-const addAttractionMarkers = (AMap: any) => {
-  if (!tripPlan.value) return
-
-  const markers: any[] = []
-  const allAttractions: any[] = []
-
-  // 收集所有景点
-  tripPlan.value.days.forEach((day, dayIndex) => {
-    day.attractions.forEach((attraction, attrIndex) => {
-      if (attraction.location && attraction.location.longitude && attraction.location.latitude) {
-        allAttractions.push({
-          ...attraction,
-          dayIndex,
-          attrIndex
-        })
-      }
-    })
-  })
-
-  // 创建标记
-  allAttractions.forEach((attraction, index) => {
-    const marker = new AMap.Marker({
-      position: [attraction.location.longitude, attraction.location.latitude],
-      title: attraction.name,
-      label: {
-        content: `<div style="background: #4CAF50; color: white; padding: 4px 8px; border-radius: 4px; font-size: 12px;">${index + 1}</div>`,
-        offset: new AMap.Pixel(0, -30)
-      }
-    })
-
-    // 创建信息窗口
-    const infoWindow = new AMap.InfoWindow({
-      content: `
-        <div style="padding: 10px;">
-          <h4 style="margin: 0 0 8px 0;">${attraction.name}</h4>
-          <p style="margin: 4px 0;"><strong>地址:</strong> ${attraction.address}</p>
-          <p style="margin: 4px 0;"><strong>游览时长:</strong> ${attraction.visit_duration}分钟</p>
-          <p style="margin: 4px 0;"><strong>描述:</strong> ${attraction.description}</p>
-          <p style="margin: 4px 0; color: #1890ff;"><strong>第${attraction.dayIndex + 1}天 景点${attraction.attrIndex + 1}</strong></p>
-        </div>
-      `,
-      offset: new AMap.Pixel(0, -30)
-    })
-
-    // 点击标记显示信息窗口
-    marker.on('click', () => {
-      infoWindow.open(map, marker.getPosition())
-    })
-
-    markers.push(marker)
-  })
-
-  // 添加标记到地图
-  map.add(markers)
-
-  // 自动调整视野以包含所有标记
-  if (allAttractions.length > 0) {
-    map.setFitView(markers)
-  }
-
-  // 绘制路线
-  drawRoutes(AMap, allAttractions)
+/**
+ * 把视野聚焦到某一天的景点。
+ *
+ * 这是"地图常驻右侧"带来的新能力：切 Tab 地图就跟着走，
+ * 不用像以前那样滚回去找地图、再等它重新渲染。
+ */
+async function focusDay(index: number) {
+  await nextTick();
+  const markers = dayMarkers.get(index);
+  if (!map || !markers?.length) return;
+  map.setFitView(markers, false, [60, 60, 60, 60]);
 }
 
-// 绘制路线
-const drawRoutes = (AMap: any, attractions: any[]) => {
-  if (attractions.length < 2) return
-
-  // 按天分组绘制路线
-  const dayGroups: any = {}
-  attractions.forEach(attr => {
-    if (!dayGroups[attr.dayIndex]) {
-      dayGroups[attr.dayIndex] = []
-    }
-    dayGroups[attr.dayIndex].push(attr)
-  })
-
-  // 为每天的景点绘制路线
-  Object.values(dayGroups).forEach((dayAttractions: any) => {
-    if (dayAttractions.length < 2) return
-
-    const path = dayAttractions.map((attr: any) => [
-      attr.location.longitude,
-      attr.location.latitude
-    ])
-
-    const polyline = new AMap.Polyline({
-      path: path,
-      strokeColor: '#1890ff',
-      strokeWeight: 4,
-      strokeOpacity: 0.8,
-      strokeStyle: 'solid',
-      showDir: true // 显示方向箭头
-    })
-
-    map.add(polyline)
-  })
+function escapeHtml(s: string): string {
+  return (s || '').replace(/[&<>"']/g, (c) =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c] as string
+  );
 }
 </script>
 
 <style scoped>
-.result-container {
-  min-height: 100vh;
-  background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
-  padding: 40px 20px;
-}
-
-.page-header {
-  max-width: 1200px;
-  margin: 0 auto 30px;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  animation: fadeInDown 0.6s ease-out;
-}
-
-.back-button {
-  border-radius: 8px;
-  font-weight: 500;
-}
-
-/* 内容布局 */
-.content-wrapper {
-  max-width: 1400px;
+.result {
+  max-width: var(--container-wide);
   margin: 0 auto;
+  padding: var(--space-5) var(--space-4) var(--space-8);
+
+  /* Tab 栏占的垂直空间 = 36px 按钮 + 上下各 8px padding + 1px 下边线 ≈ 53px，
+     取 56px 留余量。吸顶的 Tab 和吸顶的地图都要用这个数，
+     否则地图顶端会被 Tab 盖住一截。 */
+  --tabs-h: 56px;
+}
+
+/* ---------------- 页头 ---------------- */
+.rh {
   display: flex;
-  gap: 24px;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  margin-bottom: var(--space-4);
 }
 
-.side-nav {
-  width: 240px;
-  flex-shrink: 0;
+.rh-actions {
+  display: flex;
+  gap: var(--space-2);
+  flex-wrap: wrap;
 }
 
-.side-nav :deep(.ant-menu) {
-  border-radius: 12px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
-  background: white;
+.undo-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-4);
+  margin-bottom: var(--space-3);
+  border-radius: var(--radius-sm);
+  background: var(--brand-50);
+  border: 1px solid var(--brand-100);
+  font-size: var(--fs-sm);
+  color: var(--text-1);
+  animation: fadeInDown var(--dur-base) var(--ease-out) both;
 }
 
-.side-nav :deep(.ant-menu-item) {
-  margin: 4px 8px;
-  border-radius: 8px;
-  transition: all 0.3s ease;
+.fallback-alert {
+  margin-bottom: var(--space-4);
 }
 
-.side-nav :deep(.ant-menu-item-selected) {
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  color: white;
+/* ---------------- Tab ----------------
+ * 横向可滚动，天数多的时候不会挤成一团（手机上尤其重要）。
+ *
+ * **吸顶**：Day 1 的内容一长，Tab 一旦滚出视口，想切到 Day 2 就得先滚回顶部 ——
+ * 分页的意义（随手切换）就没了。z-index 取 20：要盖住右侧吸顶地图，
+ * 但不能越过全局顶栏（App.vue 里是 100）和 antd 的弹层（1000+）。
+ * 背景必须给实色，否则内容会从吸顶栏下面透出来。
+ */
+.tabs {
+  position: sticky;
+  top: var(--header-h);
+  z-index: 20;
+  background: var(--bg-page);
+  display: flex;
+  gap: var(--space-2);
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: var(--space-2) 0;
+  margin-bottom: var(--space-4);
+  border-bottom: 1px solid var(--line-1);
+  scrollbar-width: none;
 }
 
-.side-nav :deep(.ant-menu-item:hover) {
-  background: rgba(102, 126, 234, 0.1);
+.tabs::-webkit-scrollbar {
+  display: none;
 }
 
-.main-content {
-  flex: 1;
+.tab {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: 0 0 auto;
+  min-height: 36px;
+  padding: 0 var(--space-4);
+  border: 1px solid transparent;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  font-family: inherit;
+  font-size: var(--fs-caption);
+  font-weight: var(--fw-medium);
+  color: var(--text-2);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: color var(--dur-fast) var(--ease-out),
+    background-color var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out);
+}
+
+.tab:hover {
+  color: var(--brand-600);
+  background: var(--brand-50);
+}
+
+.tab.is-active {
+  color: var(--brand-600);
+  background: var(--bg-tint);
+  border-color: var(--brand-300);
+  font-weight: var(--fw-semibold);
+}
+
+/* 天气小字：藏在 Tab 里，切页时顺手看一眼那天什么天 */
+.tab-weather {
+  font-style: normal;
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+}
+
+/* ---------------- 内容 + 地图 ---------------- */
+.rc-body {
+  display: grid;
+  /* 左内容自适应、右地图固定 —— 地图的宽度不该随内容长度变化 */
+  grid-template-columns: minmax(0, 1fr) 42%;
+  gap: var(--space-5);
+  align-items: start;
+}
+
+.rc-content {
   min-width: 0;
 }
 
-/* 景点图片样式 */
-.attraction-image-wrapper {
+/* 地图常驻：sticky 让它在内容很长时也钉在视口里，
+   这样"左边的行程滚到哪，地图都在眼前"。
+   top 要跳过顶栏**和**吸顶的 Tab，否则地图顶端会被 Tab 压住。 */
+.rc-map {
+  position: sticky;
+  top: calc(var(--header-h) + var(--tabs-h) + var(--space-4));
+  background: var(--bg-surface);
+  border: 1px solid var(--line-1);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-1);
+  padding: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.map-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.map-title {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  font-size: var(--fs-h3);
+  font-weight: var(--fw-semibold);
+  color: var(--text-1);
+}
+
+.map-sub {
+  font-size: var(--fs-micro);
+  font-weight: var(--fw-regular);
+  color: var(--brand-600);
+}
+
+.map-box {
   position: relative;
-  margin-bottom: 12px;
-  border-radius: 8px;
-  overflow: hidden;
-}
-
-.attraction-image {
   width: 100%;
-  height: 200px;
-  object-fit: cover;
-  transition: transform 0.3s ease;
+  /* 高度按视口算：地图常驻时应该"长满一屏"，而不是固定值留出空白。
+     减去顶栏、吸顶 Tab、页头与卡片内边距的高度；上下限保证极端尺寸下仍可用。 */
+  height: clamp(360px, calc(100dvh - var(--header-h) - var(--tabs-h) - 220px), 720px);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  background: var(--bg-sunken);
 }
 
-.attraction-image-wrapper:hover .attraction-image {
-  transform: scale(1.05);
+.rc-map.is-collapsed .map-box {
+  height: 0;
 }
 
-.attraction-badge {
-  position: absolute;
-  top: 12px;
-  left: 12px;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  color: white;
-  width: 36px;
-  height: 36px;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-weight: bold;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
-}
-
-.badge-number {
-  font-size: 18px;
-}
-
-.price-tag {
-  position: absolute;
-  top: 12px;
-  right: 12px;
-  background: rgba(255, 77, 79, 0.9);
-  color: white;
-  padding: 4px 12px;
-  border-radius: 12px;
-  font-weight: bold;
-  font-size: 14px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
-}
-
-/* 天气卡片样式 */
-.weather-card {
-  background: linear-gradient(135deg, #e0f7fa 0%, #b2ebf2 100%);
-  border: none !important;
-  transition: all 0.3s ease;
-}
-
-.weather-card:hover {
-  transform: translateY(-4px);
-  box-shadow: 0 8px 16px rgba(0, 0, 0, 0.15);
-}
-
-.weather-date {
-  font-size: 16px;
-  font-weight: bold;
-  color: #00796b;
-  margin-bottom: 12px;
-  text-align: center;
-}
-
-.weather-info-row {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-bottom: 8px;
-}
-
-.weather-icon {
-  font-size: 24px;
-}
-
-.weather-label {
-  font-size: 12px;
-  color: #666;
-}
-
-.weather-value {
-  font-size: 16px;
-  font-weight: 600;
-  color: #00796b;
-}
-
-.weather-wind {
-  margin-top: 8px;
-  padding-top: 8px;
-  border-top: 1px solid rgba(0, 121, 107, 0.2);
-  text-align: center;
-  color: #00796b;
-  font-size: 14px;
-}
-
-/* 回到顶部按钮 */
-.back-top-button {
-  width: 50px;
-  height: 50px;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  color: white;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 24px;
-  font-weight: bold;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
-  cursor: pointer;
-  transition: all 0.3s ease;
-}
-
-.back-top-button:hover {
-  transform: scale(1.1);
-  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.4);
-}
-
-/* 酒店卡片样式 */
-.hotel-card {
-  background: linear-gradient(135deg, #e3f2fd 0%, #bbdefb 100%);
-  border: none !important;
-}
-
-.hotel-card :deep(.ant-card-head) {
-  background: linear-gradient(135deg, #1976d2 0%, #1565c0 100%);
-}
-
-.hotel-title {
-  color: white !important;
-  font-weight: 600;
-}
-
-/* 顶部信息区布局 */
-.top-info-section {
-  display: flex;
-  gap: 20px;
-  margin-bottom: 20px;
-}
-
-.left-info {
-  flex: 0 0 400px;
-  display: flex;
-  flex-direction: column;
-  gap: 20px;
-}
-
-.right-map {
-  flex: 1;
-}
-
-/* 行程概览卡片 */
-.overview-card {
-  height: fit-content;
-}
-
-.overview-content {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.info-item {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.info-label {
-  font-size: 14px;
-  font-weight: 600;
-  color: #666;
-}
-
-.info-value {
-  font-size: 15px;
-  color: #333;
-  line-height: 1.6;
-}
-
-/* 预算卡片 */
-.budget-card {
-  height: fit-content;
-}
-
-.budget-grid {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 16px;
-  margin-bottom: 16px;
-}
-
-.budget-item {
-  text-align: center;
-  padding: 12px;
-  background: linear-gradient(135deg, #f5f7fa 0%, #ffffff 100%);
-  border-radius: 8px;
-  border: 1px solid #e8e8e8;
-}
-
-.budget-label {
-  font-size: 13px;
-  color: #666;
-  margin-bottom: 8px;
-}
-
-.budget-value {
-  font-size: 20px;
-  font-weight: 700;
-  color: #1890ff;
-}
-
-.budget-total {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 16px;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  border-radius: 8px;
-  color: white;
-}
-
-.total-label {
-  font-size: 16px;
-  font-weight: 600;
-}
-
-.total-value {
-  font-size: 28px;
-  font-weight: 700;
-}
-
-/* 地图卡片 */
-.map-card {
+.map-inner {
+  width: 100%;
   height: 100%;
-  min-height: 500px;
 }
 
-.map-card :deep(.ant-card-body) {
-  height: calc(100% - 57px);
-  padding: 0;
+.map-error {
+  font-size: var(--fs-caption);
+  color: var(--warning);
 }
 
-/* 每日行程卡片 */
-.days-card {
-  margin-top: 20px;
-}
-
-.day-header {
+/* ---------------- 导出用的离屏完整视图 ----------------
+ * 只活到导出结束。放在视口外而不是 display:none —— 后者量不到尺寸，
+ * html2canvas 会截出 0×0 的空白图。
+ * pointer-events:none 让它在离屏期间也绝不拦截点击；
+ * aria-hidden 在模板上，避免读屏重复朗读整份行程。
+ */
+.capture-stage {
+  position: fixed;
+  left: -20000px;
+  top: 0;
+  width: 1000px;
+  box-sizing: border-box;
+  padding: var(--space-5);
   display: flex;
-  justify-content: space-between;
-  align-items: center;
-  width: 100%;
+  flex-direction: column;
+  gap: var(--space-6);
+  pointer-events: none;
 }
 
-.day-title {
-  font-size: 18px;
-  font-weight: 600;
-  color: #333;
+/* ---------------- 弹窗 ---------------- */
+.share-hint {
+  font-size: var(--fs-caption);
+  color: var(--text-2);
+  margin-bottom: var(--space-3);
 }
 
-.day-date {
-  font-size: 14px;
-  color: #999;
-}
-
-.day-info {
-  margin-bottom: 20px;
-  padding: 16px;
-  background: linear-gradient(135deg, #f5f7fa 0%, #ffffff 100%);
-  border-radius: 8px;
-  border: 1px solid #e8e8e8;
-}
-
-.info-row {
+.share-row {
   display: flex;
-  gap: 12px;
-  margin-bottom: 8px;
+  gap: var(--space-3);
 }
 
-.info-row:last-child {
-  margin-bottom: 0;
+.unsaved-text {
+  font-size: var(--fs-caption);
+  color: var(--text-1);
+  margin-bottom: var(--space-5);
 }
 
-.info-row .label {
-  font-weight: 600;
-  color: #666;
-  min-width: 100px;
+.unsaved-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-3);
 }
 
-.info-row .value {
-  color: #333;
-  flex: 1;
-}
-
-/* 卡片样式优化 */
-:deep(.ant-card) {
-  border-radius: 12px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
-  margin-bottom: 20px;
-  transition: all 0.3s ease;
-  animation: fadeInUp 0.6s ease-out;
-}
-
-:deep(.ant-card:hover) {
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
-}
-
-:deep(.ant-card-head) {
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  color: white !important;
-  border-radius: 12px 12px 0 0;
-  font-weight: 600;
-}
-
-:deep(.ant-card-head-title) {
-  color: white !important;
-  font-size: 18px;
-}
-
-:deep(.ant-card-head-title span) {
-  color: white !important;
-}
-
-/* Collapse样式 */
-:deep(.ant-collapse) {
-  border: none;
-  background: transparent;
-}
-
-:deep(.ant-collapse-item) {
-  margin-bottom: 16px;
-  border: 1px solid #e8e8e8;
-  border-radius: 12px;
-  overflow: hidden;
-}
-
-:deep(.ant-collapse-header) {
-  background: linear-gradient(135deg, #f5f7fa 0%, #ffffff 100%);
-  padding: 16px 20px !important;
-  font-weight: 600;
-}
-
-:deep(.ant-collapse-content) {
-  border-top: 1px solid #e8e8e8;
-}
-
-:deep(.ant-collapse-content-box) {
-  padding: 20px;
-}
-
-/* 统计卡片样式 */
-:deep(.ant-statistic-title) {
-  font-size: 14px;
-  color: #666;
-  margin-bottom: 8px;
-}
-
-:deep(.ant-statistic-content) {
-  font-size: 24px;
-  font-weight: 600;
-  color: #1890ff;
-}
-
-/* 景点卡片样式 */
-:deep(.ant-list-item) {
-  transition: all 0.3s ease;
-}
-
-:deep(.ant-list-item:hover) {
-  transform: scale(1.02);
-}
-
-/* 动画 */
-@keyframes fadeInDown {
-  from {
-    opacity: 0;
-    transform: translateY(-20px);
+/* ---------------- 响应式 ----------------
+ * 991 以下地图不再常驻右侧：横向排不下两块内容。
+ * 改成"Tab → 地图 → 内容"的纵向结构，地图高度回到固定值。
+ */
+@media (max-width: 991px) {
+  .rc-body {
+    grid-template-columns: 1fr;
   }
-  to {
-    opacity: 1;
-    transform: translateY(0);
+
+  .rc-map {
+    position: static;
+    order: -1; /* 地图放在内容上方：先看空间关系再看文字 */
+  }
+
+  .map-box {
+    height: 320px;
   }
 }
 
-@keyframes fadeInUp {
-  from {
-    opacity: 0;
-    transform: translateY(20px);
+@media (max-width: 767px) {
+  .result {
+    padding: var(--space-4) var(--space-3) var(--space-6);
   }
-  to {
-    opacity: 1;
-    transform: translateY(0);
+
+  .rh-actions {
+    width: 100%;
+  }
+
+  .rh-actions :deep(.ant-btn) {
+    flex: 1 1 0;
+    min-height: var(--touch-min);
+  }
+
+  .map-box {
+    height: 260px;
+  }
+
+  .rc-map {
+    padding: var(--space-3);
   }
 }
 
-/* 响应式设计 */
-@media (max-width: 768px) {
-  .result-container {
-    padding: 20px 10px;
+/* 窄屏只留图标：三个带文字的按钮在 375px 上放不下 */
+@media (max-width: 575px) {
+  /* 顶栏在 575 以下换成 56px 高（见 App.vue），吸顶的 Tab 得跟着走 ——
+     否则 Tab 上方会空出一道缝，把下面的内容露出来 */
+  .tabs {
+    top: var(--header-h-mobile);
   }
 
-  .page-header {
-    flex-direction: column;
-    gap: 16px;
+  .rh-btn-text {
+    display: none;
+  }
+
+  .rh-back {
+    min-width: var(--touch-min);
   }
 }
 </style>
-

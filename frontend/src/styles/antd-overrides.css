@@ -1,0 +1,493 @@
+/**
+ * antd 组件 → 紫调轻盈语言
+ *
+ * 这套视觉的三个关键细节，都在这里落地：
+ *   1. **主按钮是渐变药丸 + 同色柔光**（`135deg #155e75 → #0e7490` + 同色投影）
+ *   2. **输入控件的浅紫聚焦环**（3px 半透明主色光晕，不是变边框色）
+ *   3. **卡片是"浮起来的白纸片"**（大圆角 + 1px 浅描边 + 极轻阴影）
+ *
+ * 阴影一定要轻。这套风格的轻盈感全靠"阴影几乎看不见但存在"——
+ * 一旦上重阴影，立刻变成廉价的卡片堆。
+ */
+
+/* ==========================================================
+   输入控件
+   ========================================================== */
+
+.ant-input,
+.ant-input-affix-wrapper,
+.ant-picker {
+  background: var(--bg-surface) !important;
+  border: 1px solid var(--line-2) !important;
+  border-radius: var(--radius-md) !important;
+  box-shadow: none !important;
+  padding: 7px 12px !important;
+  transition: border-color var(--dur-fast) var(--ease-out),
+    box-shadow var(--dur-fast) var(--ease-out);
+}
+
+.ant-input-affix-wrapper > .ant-input {
+  border: none !important;
+  padding: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+.ant-input-affix-wrapper > .ant-input-prefix,
+.ant-input-affix-wrapper > .ant-input-suffix {
+  color: var(--text-3);
+}
+
+.ant-select:not(.ant-select-customize-input) .ant-select-selector {
+  background: var(--bg-surface) !important;
+  border: 1px solid var(--line-2) !important;
+  border-radius: var(--radius-md) !important;
+  box-shadow: none !important;
+  padding-inline: 12px !important;
+  transition: border-color var(--dur-fast) var(--ease-out),
+    box-shadow var(--dur-fast) var(--ease-out);
+}
+
+.ant-select-arrow {
+  color: var(--text-3);
+}
+
+textarea.ant-input {
+  padding: 10px 12px !important;
+}
+
+/* hover：边框稍微加深，不做夸张变化 */
+.ant-input:hover,
+.ant-input-affix-wrapper:hover,
+.ant-picker:hover,
+.ant-select:not(.ant-select-disabled):hover .ant-select-selector {
+  border-color: var(--brand-400) !important;
+}
+
+/* 聚焦：**浅紫光晕环**。这是这套视觉最容易辨认的交互细节。
+   用 box-shadow 而不是改 border-width —— 后者会让盒子尺寸变化，内容跳一下。 */
+.ant-input:focus,
+.ant-input-focused,
+.ant-input-affix-wrapper-focused,
+.ant-picker-focused,
+.ant-select-focused:not(.ant-select-disabled) .ant-select-selector {
+  border-color: var(--brand-500) !important;
+  box-shadow: 0 0 0 3px var(--brand-a14) !important;
+}
+
+/* 校验失败：同样的环，换成红色 */
+.ant-input-status-error,
+.ant-input-affix-wrapper-status-error,
+.ant-select-status-error .ant-select-selector {
+  border-color: var(--error) !important;
+}
+
+.ant-input-affix-wrapper-status-error:focus-within {
+  box-shadow: 0 0 0 3px rgba(227, 72, 80, 0.14) !important;
+}
+
+.ant-form-item-explain-error {
+  font-size: var(--fs-caption);
+  color: var(--error);
+}
+
+.ant-input-data-count {
+  font-family: var(--font-num);
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+}
+
+/* 手机端字号 ≥16px，否则 iOS Safari 聚焦时会强制放大页面 */
+@media (max-width: 767px) {
+  .ant-input,
+  .ant-input-affix-wrapper input,
+  .ant-select-selection-item,
+  .ant-select-selection-placeholder,
+  .ant-picker-input input {
+    font-size: 16px;
+  }
+}
+
+/* ==========================================================
+   按钮
+   ========================================================== */
+
+/* 药丸形状是这套视觉的默认按钮形态 */
+.ant-btn {
+  border-radius: var(--radius-pill);
+  font-weight: var(--fw-medium);
+  box-shadow: none;
+  transition: background-color var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out),
+    box-shadow var(--dur-fast) var(--ease-out),
+    transform var(--dur-instant, 100ms) var(--ease-out);
+}
+
+.ant-btn:not(:disabled):active {
+  transform: scale(0.98);
+}
+
+/* 主按钮：渐变 + 同色柔光。整套视觉里最"亮"的一个元素 */
+.ant-btn-primary {
+  background: var(--brand-gradient);
+  border: none;
+  color: #fff;
+  box-shadow: var(--shadow-brand);
+}
+
+.ant-btn-primary:not(:disabled):hover {
+  background: var(--brand-gradient);
+  color: #fff;
+  /* 用亮度微调而不是换一套渐变色，避免 hover 时颜色跳变 */
+  filter: brightness(1.06);
+  box-shadow: 0 6px 18px var(--brand-a34);
+}
+
+/* 次按钮：白底 + 浅描边，hover 时换成浅紫底 */
+.ant-btn-default {
+  background: var(--bg-surface);
+  border: 1px solid var(--line-2);
+  color: var(--text-1);
+}
+
+.ant-btn-default:not(:disabled):hover {
+  border-color: var(--brand-400);
+  background: var(--brand-50);
+  color: var(--brand-600);
+}
+
+/* 文字按钮 */
+.ant-btn-link,
+.ant-btn-text {
+  color: var(--brand-ink);
+  box-shadow: none;
+}
+
+.ant-btn-link:hover,
+.ant-btn-text:hover {
+  color: var(--brand-600);
+  background: var(--brand-50);
+}
+
+/* 危险按钮 */
+.ant-btn-dangerous {
+  color: var(--error);
+  border-color: #f5c2c4;
+}
+
+.ant-btn-dangerous:not(:disabled):hover {
+  background: var(--error-tint);
+  border-color: var(--error);
+  color: var(--error);
+}
+
+.ant-btn-primary.ant-btn-dangerous {
+  background: var(--error);
+  border: none;
+  color: #fff;
+  box-shadow: 0 4px 14px rgba(227, 72, 80, 0.28);
+}
+
+@media (max-width: 767px) {
+  .ant-btn {
+    min-height: var(--touch-min);
+  }
+
+  .ant-btn-sm {
+    min-height: 36px;
+    min-width: 36px;
+  }
+}
+
+/* ==========================================================
+   卡片：浮起来的白纸片
+   ========================================================== */
+
+.ant-card {
+  background: var(--bg-surface);
+  border: 1px solid var(--line-1);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-1);
+}
+
+.ant-card-head {
+  border-bottom: 1px solid var(--line-1);
+  padding-inline: var(--space-5);
+  min-height: 52px;
+  font-weight: var(--fw-semibold);
+}
+
+.ant-card-head-title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.ant-card-body {
+  padding: var(--space-5);
+}
+
+/* ==========================================================
+   折叠面板
+   ========================================================== */
+
+.ant-collapse {
+  background: var(--bg-surface);
+  border: 1px solid var(--line-1);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  box-shadow: var(--shadow-1);
+}
+
+.ant-collapse > .ant-collapse-item {
+  border-bottom: 1px solid var(--line-1);
+}
+
+.ant-collapse > .ant-collapse-item:last-child {
+  border-bottom: none;
+}
+
+.ant-collapse > .ant-collapse-item > .ant-collapse-header {
+  font-weight: var(--fw-semibold);
+  color: var(--text-1);
+  padding: var(--space-4) var(--space-5);
+}
+
+.ant-collapse-content {
+  background: transparent;
+  border-top: 1px solid var(--line-1);
+}
+
+.ant-collapse-content-box {
+  padding: var(--space-5) !important;
+}
+
+/* ==========================================================
+   表格
+   ========================================================== */
+
+.ant-table {
+  background: transparent;
+  font-size: var(--fs-body);
+}
+
+.ant-table-thead > tr > th:not(:last-child):not(.ant-table-selection-column):not(
+    .ant-table-row-expand-icon-cell
+  ):not([colspan])::before {
+  display: none;
+}
+
+.ant-table-thead > tr > th {
+  background: var(--bg-sunken) !important;
+  border-bottom: 1px solid var(--line-1) !important;
+  font-size: var(--fs-caption);
+  font-weight: var(--fw-semibold);
+  color: var(--text-2);
+  padding-block: var(--space-3);
+}
+
+.ant-table-thead > tr:first-child > th:first-child {
+  border-start-start-radius: var(--radius-md);
+}
+
+.ant-table-thead > tr:first-child > th:last-child {
+  border-start-end-radius: var(--radius-md);
+}
+
+.ant-table-tbody > tr > td {
+  background: transparent;
+  border-bottom: 1px solid var(--line-1);
+  padding-block: var(--space-4);
+}
+
+.ant-table-tbody > tr:hover > td {
+  background: var(--brand-50) !important;
+}
+
+.ant-table-pagination {
+  margin-bottom: 0 !important;
+}
+
+/* ==========================================================
+   标签：药丸 + 浅底
+   ========================================================== */
+
+.ant-tag {
+  border-radius: var(--radius-pill);
+  background: var(--bg-tint);
+  border: none;
+  color: var(--brand-ink);
+  font-size: var(--fs-micro);
+  font-weight: var(--fw-medium);
+  line-height: 1.7;
+  padding: 0 var(--space-3);
+  margin: 0;
+}
+
+.ant-tag-success {
+  background: var(--success-tint) !important;
+  color: #1a8f66 !important;
+}
+
+.ant-tag-warning {
+  background: var(--warning-tint) !important;
+  color: var(--warning) !important;
+}
+
+.ant-tag-error {
+  background: var(--error-tint) !important;
+  color: var(--error) !important;
+}
+
+.ant-tag-processing {
+  background: var(--info-tint) !important;
+  color: var(--brand-600) !important;
+}
+
+/* ==========================================================
+   其它控件
+   ========================================================== */
+
+.ant-menu-item-selected,
+.ant-menu-item-active {
+  color: var(--brand-600) !important;
+}
+
+.ant-radio-button-wrapper {
+  border-radius: var(--radius-sm) !important;
+}
+
+.ant-radio-button-wrapper:first-child {
+  border-start-start-radius: var(--radius-sm) !important;
+  border-end-start-radius: var(--radius-sm) !important;
+}
+
+.ant-radio-button-wrapper:last-child {
+  border-start-end-radius: var(--radius-sm) !important;
+  border-end-end-radius: var(--radius-sm) !important;
+}
+
+.ant-radio-button-wrapper-checked:not(.ant-radio-button-wrapper-disabled) {
+  color: var(--brand-600);
+  border-color: var(--brand-500);
+}
+
+.ant-radio-button-wrapper-checked:not(
+    .ant-radio-button-wrapper-disabled
+  )::before {
+  background-color: var(--brand-500);
+}
+
+.ant-checkbox-checked .ant-checkbox-inner {
+  background-color: var(--brand-500);
+  border-color: var(--brand-500);
+}
+
+.ant-checkbox-inner {
+  border-radius: var(--radius-xs);
+}
+
+.ant-switch-checked {
+  background: var(--brand-500);
+}
+
+.ant-progress-inner {
+  background: var(--bg-sunken);
+}
+
+.ant-progress-bg {
+  background: var(--brand-gradient);
+}
+
+.ant-alert {
+  border-radius: var(--radius-md);
+  border: 1px solid transparent;
+}
+
+.ant-alert-info {
+  background: var(--info-tint);
+  border-color: #dbe1fb;
+}
+
+.ant-alert-success {
+  background: var(--success-tint);
+  border-color: #cdeee1;
+}
+
+.ant-alert-warning {
+  background: var(--warning-tint);
+  border-color: #f3e1cb;
+}
+
+.ant-alert-error {
+  background: var(--error-tint);
+  border-color: #f8d7d7;
+}
+
+/* ---------------- 浮层 ---------------- */
+.ant-modal-content,
+.ant-dropdown-menu,
+.ant-select-dropdown,
+.ant-picker-dropdown .ant-picker-panel-container,
+.ant-popover-inner {
+  border-radius: var(--radius-lg) !important;
+  box-shadow: var(--shadow-overlay) !important;
+  border: 1px solid var(--line-1);
+}
+
+.ant-modal-header {
+  background: transparent;
+  border-bottom: 1px solid var(--line-1);
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+}
+
+.ant-modal-content {
+  padding: var(--space-6);
+}
+
+.ant-dropdown-menu-item,
+.ant-select-item {
+  border-radius: var(--radius-sm);
+}
+
+.ant-select-item-option-selected:not(.ant-select-item-option-disabled) {
+  background: var(--brand-50);
+  color: var(--brand-600);
+}
+
+.ant-tooltip-inner {
+  border-radius: var(--radius-sm) !important;
+  background: #1e293b !important;
+  box-shadow: var(--shadow-3) !important;
+}
+
+.ant-popover-inner {
+  padding: var(--space-3) var(--space-4);
+}
+
+.ant-descriptions-item-label {
+  color: var(--text-2);
+}
+
+.ant-empty-description {
+  color: var(--text-2);
+}
+
+.ant-statistic-content {
+  font-family: var(--font-num);
+}
+
+.ant-back-top {
+  right: var(--space-5);
+  bottom: var(--space-5);
+}
+
+.ant-back-top-content {
+  background: var(--brand-gradient);
+  box-shadow: var(--shadow-brand);
+}
+
+.ant-divider {
+  border-color: var(--line-1);
+}

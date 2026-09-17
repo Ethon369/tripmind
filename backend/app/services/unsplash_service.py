@@ -29,6 +29,10 @@ class UnsplashService:
             params = {
                 "query": query,
                 "per_page": per_page,
+                # 限定横图。首页城市卡片是 16:10 的横画幅,
+                # 拿到竖图后 object-fit: cover 会把画面裁得只剩中间一条 ——
+                # 既看不出这是什么地方,也浪费了照片本身。
+                "orientation": "landscape",
                 "client_id": self.access_key
             }
             

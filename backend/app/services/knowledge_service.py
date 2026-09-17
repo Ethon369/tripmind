@@ -612,21 +612,129 @@ class KnowledgeService:
         hits.sort(key=lambda h: h.score, reverse=True)
         return hits
 
+    def retrieve_merged(self, query: str, top_k: int | None = None) -> list[KnowledgeHit]:
+        """两层一起检索,归并后返回**最多 top_k 条**。
+
+        与 `retrieve_for_request` 的区别:那个接受 TripRequest、用
+        `build_retrieval_query()` 拼 query(给 planner 用);这个直接接受一个字符串
+        (给检索调试台用)。
+
+        归并逻辑与 `scripts/ingest_knowledge.py --query` **共用这一份** ——
+        另写一份迟早会漂移,那时候「命令行搜得到、界面搜不到」就说不清是谁的错了。
+
+        ⚠️ `top_k` 的语义是「**返回**多少条」,不是「每层取多少条」。
+        两层各自取 k 条再归并,总数最多 2k —— 必须截断,否则接口返回的条数
+        是调用方要求的两倍(检索调试台传 4 会拿到 8 条)。
+        """
+        k = int(top_k or self.settings.rag_top_k)
+        hits = self.retrieve(query, self.NAMESPACE_GUIDES, k) + self.retrieve(
+            query, self.NAMESPACE_POI, k
+        )
+        hits.sort(key=lambda h: h.score, reverse=True)
+        return hits[:k]
+
     def build_context(self, request: Any, top_k: int | None = None) -> str:
         """给 planner 用的、可直接拼进 prompt 的引用块。检索不到时返回空串。"""
         return format_context(self.retrieve_for_request(request, top_k))
 
+    # ---------------- 灌库预览（不花钱） ----------------
+    #
+    # 这两个方法原来是 scripts/ingest_knowledge.py 里的私有函数（_count_poi /
+    # _count_guides）。做成 HTTP 接口时必须下沉到这里 —— 脚本自己的注释说得很清楚:
+    # 「如果这里另写一份统计逻辑,数字和实际入库的就不会一致,那种'预估'没有意义」。
+    # 现在 CLI 和 API 共用同一份实现。
+
+    def preview_poi_facts(self, inventory_path: Path | str | None = None) -> dict:
+        """统计 `poi_facts` 层将入库多少条。**不调用 embedding,不花钱。**
+
+        过滤条件（id 与 name 都非空）与 `ingest_poi_facts` 逐字相同,
+        这样预览的数字和实际入库的数字才对得上。
+        """
+        path = (
+            Path(inventory_path)
+            if inventory_path
+            else resolve_dir(self.settings.frozen_dir) / "amap" / "poi_inventory.json"
+        )
+        if not path.exists():
+            return {"total": 0, "per_city": {}, "path": str(path), "exists": False}
+
+        data = json.loads(path.read_text(encoding="utf-8"))
+        cities = data.get("cities") or {}
+
+        per_city: dict[str, int] = {}
+        for city, payload in cities.items():
+            per_city[city] = sum(
+                1 for p in (payload or {}).get("pois") or [] if p.get("id") and p.get("name")
+            )
+
+        return {
+            "total": sum(per_city.values()),
+            "per_city": per_city,
+            "path": str(path),
+            "size_kb": round(path.stat().st_size / 1024, 1),
+            "exists": True,
+        }
+
+    def preview_city_guides(self, guides_dir: Path | str | None = None) -> dict:
+        """统计 `city_guides` 层将入库多少块。**不调用 embedding,不花钱。**
+
+        复用入库时同一个 `split_markdown_sections()` —— 切分逻辑改了,
+        预览和实际入库会一起改,不会出现「预览说 30 块、实际灌进去 24 块」。
+        """
+        directory = (
+            Path(guides_dir)
+            if guides_dir
+            else resolve_dir(self.settings.knowledge_dir) / "city_guides"
+        )
+        if not directory.exists():
+            return {"total": 0, "per_file": {}, "files": [], "dir": str(directory), "exists": False}
+
+        files: list[dict] = []
+        per_file: dict[str, int] = {}
+        for f in sorted(directory.glob("*.md")):
+            sections = split_markdown_sections(f.read_text(encoding="utf-8"), source=f.name)
+            per_file[f.name] = len(sections)
+            files.append(
+                {
+                    "name": f.name,
+                    "sections": len(sections),
+                    "size_kb": round(f.stat().st_size / 1024, 1),
+                }
+            )
+
+        return {
+            "total": sum(per_file.values()),
+            "per_file": per_file,
+            "files": files,
+            "dir": str(directory),
+            "exists": True,
+        }
+
     # ---------------- 灌库 ----------------
 
-    def _embed_in_batches(self, texts: list[str]) -> list[list[float]]:
-        """分批编码。一次发太多会超接口单请求上限;一次发一条则请求数爆炸。"""
+    def _embed_in_batches(self, texts: list[str], progress_cb: Any = None) -> list[list[float]]:
+        """分批编码。一次发太多会超接口单请求上限;一次发一条则请求数爆炸。
+
+        Args:
+            texts: 待编码文本
+            progress_cb: 可选回调 `(processed, total) -> None`,每批完成后调用一次。
+                灌 1750 条要 55 批、分钟级,没有进度回调的话前端只能干等。
+        """
         vectors: list[list[float]] = []
-        for i in range(0, len(texts), _EMBED_BATCH):
+        total = len(texts)
+        for i in range(0, total, _EMBED_BATCH):
             batch = texts[i : i + _EMBED_BATCH]
             vectors.extend(self.encode(batch))
+            if progress_cb is not None:
+                progress_cb(len(vectors), total)
         return vectors
 
-    def ingest_poi_facts(self, inventory_path: Path | str | None = None, recreate: bool = False) -> dict:
+    def ingest_poi_facts(
+        self,
+        inventory_path: Path | str | None = None,
+        recreate: bool = False,
+        progress_cb: Any = None,
+    ) -> dict:
         """把冻结的高德 POI 库存灌进 `poi_facts`。
 
         数据源是 `data/frozen/amap/poi_inventory.json`(P2 录制的 ground truth)
@@ -666,7 +774,7 @@ class KnowledgeService:
         if not texts:
             return {"namespace": self.NAMESPACE_POI, "collection": store.collection, "count": 0}
 
-        vectors = self._embed_in_batches(texts)
+        vectors = self._embed_in_batches(texts, progress_cb=progress_cb)
         rows = [
             {
                 "id": meta["id"],
@@ -686,7 +794,12 @@ class KnowledgeService:
             "cities": list(cities.keys()),
         }
 
-    def ingest_city_guides(self, guides_dir: Path | str | None = None, recreate: bool = False) -> dict:
+    def ingest_city_guides(
+        self,
+        guides_dir: Path | str | None = None,
+        recreate: bool = False,
+        progress_cb: Any = None,
+    ) -> dict:
         """把 `data/knowledge_base/city_guides/*.md` 灌进 `city_guides`。"""
         directory = (
             Path(guides_dir)
@@ -710,7 +823,7 @@ class KnowledgeService:
                 texts.append(fit_utf8(chunk, _MAX_TEXT_BYTES))
                 metas.append({"source": f.name, "heading_path": heading_path, "idx": idx})
 
-        vectors = self._embed_in_batches(texts)
+        vectors = self._embed_in_batches(texts, progress_cb=progress_cb)
         rows = [
             {
                 "id": f"guide:{meta['source']}:{meta['idx']}",
