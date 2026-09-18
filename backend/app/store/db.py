@@ -101,7 +101,7 @@ CREATE TABLE IF NOT EXISTS llm_calls (
     completion_tokens INTEGER,
     cache_hit_tokens  INTEGER,
     usage_source      TEXT,
-    raw_usage_json    TEXT,              -- DeepSeek 的 cache_hit/miss 等原样留存
+    raw_usage_json    TEXT,              -- 厂商原始的 usage 字段原样留存(换模型后仍能核对计费口径)
     cost_cny          REAL,
     ms                INTEGER,
     created_at        TEXT NOT NULL

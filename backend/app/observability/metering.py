@@ -35,6 +35,15 @@ from hello_agents.core.exceptions import HelloAgentsException
 
 from .pricing import compute_cost_cny, is_priced
 
+# 消息体的类型。
+#
+# ⚠️ 不能写成 `dict[str, str]`:`content` 既可以是字符串(纯文本),
+# 也可以是**数组**(多模态 —— 数组里分别是 `{"type": "text"}` 与
+# `{"type": "image_url", "image_url": {...}}`,见 llm_service.extract_text_from_image)。
+# 标成 str 会把图片这条路挡在类型检查之外,逼调用方去写 type: ignore,
+# 那还不如把类型写准。
+Messages = list[dict[str, Any]]
+
 # 没有 usage 时的兜底估算系数。
 # 中文大致 1 token ≈ 1.5 字,即每字约 0.67 token;取 0.6 偏保守。
 _EST_TOKENS_PER_CHAR = 0.6
@@ -47,6 +56,43 @@ SOURCE_ESTIMATED = "estimated"
 def estimate_tokens(text: str) -> int:
     """粗略估算 token 数。仅在拿不到 usage 时使用。"""
     return int(len(text or "") * _EST_TOKENS_PER_CHAR)
+
+
+def join_message_text(messages: Messages) -> str:
+    """把消息体里的**文字**拼起来。
+
+    ⚠️ 不能直接 `str(m["content"])`:多模态消息的 content 是数组,
+    `str()` 出来的是 Python 的 **repr**(带引号、花括号、`image_url` 字段名,
+    还有 base64 图片那一大串字符),估出来的数字会离谱地大
+    —— 而且只在"服务端没返回 usage"这一条分支上生效,平时看不出来。
+    """
+    parts: list[str] = []
+    for m in messages:
+        content = m.get("content")
+        if isinstance(content, list):
+            for piece in content:
+                if isinstance(piece, dict) and piece.get("type") == "text":
+                    parts.append(str(piece.get("text") or ""))
+        else:
+            parts.append(str(content or ""))
+    return "".join(parts)
+
+
+# 一张图折算成多少 token —— 仅用于「拿不到 usage」的兜底估算,不代表真实计费。
+# 视觉模型按图块计费,算不出准确值;取一个数量级合理的保守值即可。
+_IMAGE_EST_TOKENS = 1200
+
+
+def estimate_messages_tokens(messages: Messages) -> int:
+    """估算一次请求的输入 token(含图片)。仅在拿不到 usage 时使用。"""
+    images = sum(
+        1
+        for m in messages
+        if isinstance(m.get("content"), list)
+        for piece in m["content"]
+        if isinstance(piece, dict) and piece.get("type") == "image_url"
+    )
+    return estimate_tokens(join_message_text(messages)) + images * _IMAGE_EST_TOKENS
 
 
 @dataclass
@@ -151,7 +197,7 @@ class MeteredLLM(HelloAgentsLLM):
     行为与原类完全一致,只是把原本被丢掉的 response.usage 接住了。
     """
 
-    def invoke(self, messages: list[dict[str, str]], **kwargs) -> str:
+    def invoke(self, messages: Messages, **kwargs) -> str:
         import time
 
         t0 = time.perf_counter()
@@ -180,7 +226,7 @@ class MeteredLLM(HelloAgentsLLM):
     def _record(
         self,
         response: Any,
-        messages: list[dict[str, str]],
+        messages: Messages,
         content: str,
         ms: int,
     ) -> None:
@@ -197,7 +243,10 @@ class MeteredLLM(HelloAgentsLLM):
             if raw_dict:
                 prompt_tokens = int(raw_dict.get("prompt_tokens") or 0)
                 completion_tokens = int(raw_dict.get("completion_tokens") or 0)
-                # DeepSeek 特有字段:缓存命中/未命中
+                # 缓存命中字段有**两种写法**,厂商不同:
+                #   DeepSeek → prompt_cache_hit_tokens(顶层字段)
+                #   百炼等 OpenAI 兼容实现 → prompt_tokens_details.cached_tokens
+                # 先查前者再退到后者,换厂商时这一处不用改。
                 cache_hit = raw_dict.get("prompt_cache_hit_tokens")
                 if cache_hit is None:
                     details = raw_dict.get("prompt_tokens_details") or {}
@@ -205,9 +254,7 @@ class MeteredLLM(HelloAgentsLLM):
                 source = SOURCE_API
             else:
                 # 兜底:按字符估算。宁可偏保守(算贵),不低报。
-                prompt_tokens = estimate_tokens(
-                    "".join(str(m.get("content") or "") for m in messages)
-                )
+                prompt_tokens = estimate_messages_tokens(messages)
                 completion_tokens = estimate_tokens(content)
                 cache_hit = None
                 source = SOURCE_ESTIMATED
