@@ -670,12 +670,30 @@ sudo systemctl reload nginx
 
 ### 9.2 数据备份
 
-项目的持久化数据只有一处：**SQLite 数据库 `backend/data/tripmind.db`**（行程、运行记录、LLM 调用计量三张表）。
+持久化数据有两处（**Docker 部署下都在 `tripmind-data` 这个命名卷里**）：
+
+| 数据 | 路径 | 内容 |
+|---|---|---|
+| SQLite | `/data/tripmind.db` | 行程、运行记录、LLM 调用计量三张表 |
+| Milvus Lite | `/data/tripmind_milvus.db/`（**是个目录**） | 开了 RAG 才有：向量库 |
 
 ```bash
-# 建议做成每日定时任务
+# 裸机部署：建议做成每日定时任务
 sqlite3 /opt/tripmind/backend/data/tripmind.db ".backup /backup/tripmind-$(date +%F).db"
+
+# Docker 部署：备份整个卷（含 Milvus）
+docker run --rm -v tripmind-data:/data -v /backup:/backup alpine \
+  tar czf /backup/tripmind-$(date +%F).tgz -C /data .
+
+# 恢复
+docker run --rm -v tripmind-data:/data -v /backup:/backup alpine \
+  sh -c 'tar xzf /backup/tripmind-<日期>.tgz -C /data'
 ```
+
+> ⚠️ 备份 Milvus 前先 `docker compose stop backend` —— Lite 是**独占文件锁**，
+> 后端运行时复制出来的可能是半写状态。真丢了也不用慌：内置知识库
+> （1750 POI + 30 攻略块）**重灌一次只要 46 秒**，只有「用户上传的攻略」
+> 是不可再生的，值得单独备份。
 
 需要一并备份的还有：`backend/data/frozen/`、`backend/data/knowledge_base/`、`backend/.env`。
 
@@ -704,15 +722,97 @@ sudo tail -f /var/log/nginx/error.log
 | 症状 | 可能原因 | 处理 |
 |---|---|---|
 | 页面能开，接口全部 502 | 后端没起来 | `systemctl status tripmind`、看 `/var/log/tripmind/err.log` |
-| 提交行程后等 60 秒左右报 504 | Nginx 超时太短 | 按第 5 节把 `proxy_read_timeout` 调到 300s |
+| 提交行程后等一会儿报 504 | Nginx 超时太短 | 按第 5 节把 `proxy_read_timeout` 调到 330s |
+| **2 日以上行程必失败，日志只有 `Request timed out.`** | `LLM_TIMEOUT` 太小（框架默认 60s，而 planner 一步实测要 110s） | 见下方「10.1 行程生成的超时链路」 |
+| **网页报超时，但「历史行程」里却有这条记录** | 前端 axios 比后端实际耗时短 | 同上，三处一起调 |
 | 生成成功但景点名和坐标是编的 | 高德 MCP 未加载 | 检查 `/api/trip/health` 的 `mcp_tools_count` 是否为 16 |
 | 首次提交行程卡好几分钟，日志停在 `🔗 连接到 MCP 服务器...` | `uvx` 正从官方源装 `amap-mcp-server`（国内极慢），**不是卡死** | 设 `UV_INDEX_URL` 为国内镜像；并确认它真的传进了子进程，见附录第 4 个坑 |
 | 地图区域一片空白 | JS API Key 未配域名白名单 / 未配安全密钥 | 按 6.2 节配置 |
 | 前端改完 `.env` 没生效 | `VITE_` 变量是构建期注入 | 重新 `npm run build` 并刷新浏览器缓存 |
 | 提示"本次未能生成行程内容" | LLM 连不上（Key、额度、网络、代理） | 看 `app.log`；错误原因会随响应一起返回 |
+| 提示含 `DataInspectionFailed` | 模型侧**内容审查**拦了输出（不是你的 bug） | 换个偏好措辞重试；重试无用，因为是 400 |
 | 灌库进度一直查不到 | 起了多个 worker | 改为 `--workers 1` 并重启 |
 | CORS 报错 | `CORS_ORIGINS` 未改成生产域名 | 修改 `backend/.env` 后重启后端 |
+| **知识库状态 `count` 正常、检索却 0 条** | 重启后 collection 处于 `released`，未 `load` | 见 8.3「重启后的静默失效」 |
+| **灌库脚本报 `DataDirLockedError`** | Milvus Lite 是独占锁，后端正占着 | 见 8.3；改用 HTTP 灌库接口 |
+| **知识库页操作报 401 / 503** | 未配 `TRIPMIND_ADMIN_TOKEN`（503）或口令不对（401） | 见 10.2 |
 | 知识库检索无结果、但不报错 | embedding 维度不匹配或未灌库 | `./venv/bin/python scripts/check_rag_env.py`，确认维度为 1024 |
+
+---
+
+### 10.1 行程生成的超时链路
+
+**三处超时必须一起看、并按 `小 < 大` 排好。顺序反了会得到"nginx 先抛 504，
+前端拿不到可读提示"这种最难查的症状。**
+
+| 层 | 位置 | 值 |
+|---|---|---|
+| 单次 LLM 调用 | `backend/.env` 的 `LLM_TIMEOUT`（框架默认 60） | **180s** |
+| 前端 axios | `frontend/src/services/api.ts` 的 `TRIP_PLAN_TIMEOUT_MS` | **300s** |
+| nginx 反代 | `frontend/nginx.conf` 的 `proxy_read_timeout` | **330s** |
+
+为什么单次 LLM 调用需要 180 秒？生成一次行程要调 7 次 LLM：三个专家 agent
+各一次（合计约 45s），最后 planner 一次性生成**完整行程 JSON** —— 实测输出
+**7500+ tokens、耗时 110 秒**。用框架默认的 60 秒，planner 必然超时，
+表现就是"**2 日以上的行程永远失败**"，而且前 6 次调用日志全都正常，
+很容易误判成网络问题。
+
+> 实测数据（修复前）：7 次运行里 6 次失败。唯一成功的一次 planner 用了
+> 49.4 / 60 秒 —— 擦边通过，属于运气。
+
+还有一个会把超时**静默放大 3 倍**的坑：OpenAI SDK 默认 `max_retries=2`，
+而框架建客户端时没传这个参数，所以默认值一直在生效。对"生成超时"这种错误
+重试毫无意义（同样的 prompt、同样长的输出，第二次一样超时），只是把总耗时
+乘以 3 —— `LLM_TIMEOUT=180` 最坏就变成 540 秒，**直接顶穿 nginx 的 330 秒**。
+已在 `app/observability/metering.py` 的 `MeteredLLM._create_client()` 里
+关掉（`max_retries=0`），网络抖动类的重试交给前端对 5xx 的重试去做。
+
+### 10.2 管理口令（`TRIPMIND_ADMIN_TOKEN`）
+
+知识库的灌库/上传/删除、行程的修改/删除这些**写操作**接口，需要带
+`X-Admin-Token` 请求头，值等于 `backend/.env` 里的 `TRIPMIND_ADMIN_TOKEN`：
+
+```bash
+# 生成一个口令
+openssl rand -hex 24
+```
+
+写进 `.env` 后重启后端，然后在网页**顶栏右上角的「管理口令」**填入同一个口令
+（只存在浏览器 sessionStorage，关标签页即失效）。
+
+入口只有顶栏那一处，因为受保护的写操作分散在「历史行程」和「知识库」两个页面；
+按页面各放一个会让人以为是两套互不相干的东西。已设置时入口会变成品牌色并带一个绿点。
+
+口令不对/没填时，前端会给出可操作的提示（"请点右上角「管理口令」重新设置"），
+而不是把后端的 detail 原样抛出来 —— 后端说的是"为什么被拒"，用户需要的是"点哪里"。
+
+**未配置该变量时，这些接口会返回 503 而不是放行** —— 有意做成 fail-closed：
+公开部署上"忘了配"不该等于"任何人都能清库"。本地开发想用知识库页，
+就把变量配上（值随意）。
+
+只读接口（`status` / `search` / `preview` / `sources` / 行程列表与详情）**不需要**口令，
+所以不带口令访问时前端的展示功能都正常。
+
+> ⚠️ 口令是明文走 HTTP 的。对外部署请先上 HTTPS（见 6.1），否则口令会
+> 在链路上可被截获，等于没设。
+
+#### 清单是两处写的，靠测试对齐
+
+后端在路由上挂 `dependencies=[Depends(require_admin)]`，前端在
+`frontend/src/services/api.ts` 的 `ADMIN_GUARDED` 里列同样的路径。两边对不上的
+**表现都是静默的**：
+
+- 后端挂了、前端没带 → 网页上调这个接口永远 401，而口令是对的（会让人去怀疑口令）
+- 前端带了、后端没挂 → 多一个自定义头，功能不受影响，一直不会有人发现
+
+所以 `backend/tests/test_admin_token_contract.py` 会解析前端的清单，和后端
+**真实路由表**双向比对（还顺带检查正则没写宽到命中公开接口）。
+改了一边没改另一边，这个测试会直接说清是漏了哪条、后果是什么。
+
+```bash
+# 改完鉴权相关的代码，单独跑这一组先看
+cd backend && ./venv/Scripts/python.exe -m pytest tests/test_admin_token_contract.py -q
+```
 
 ---
 

@@ -32,6 +32,25 @@
           <router-link v-for="item in NAV_ITEMS" :key="item.to" :to="item.to" class="nav-link">
             {{ item.label }}
           </router-link>
+
+          <!-- 管理口令的入口放在导航尾部，**全局只有一个**。
+               受保护的写操作分散在「历史行程」（改写/删除行程）和
+               「知识库」（灌库/删攻略/切开关）两个页面 —— 按页面各放一个，
+               会让人以为它们互不相干的两套东西。
+               样式上刻意不跟三个导航项一样做药丸底：它是"维护入口"，
+               不是第四个页面，视觉层级要低一档。 -->
+          <button
+            type="button"
+            class="admin-entry"
+            :class="{ 'is-set': adminTokenSet }"
+            :aria-label="adminTokenSet ? '管理口令（已设置）' : '管理口令（未设置）'"
+            @click="openTokenDialog"
+          >
+            <span>管理口令</span>
+            <!-- 已设置时点一个小绿点。不做成"已设置"三个字：
+                 它平时不需要被读到，只要"扫一眼知道有没有"就够了。 -->
+            <span v-if="adminTokenSet" class="admin-dot" aria-hidden="true"></span>
+          </button>
         </nav>
       </div>
     </a-layout-header>
@@ -55,9 +74,44 @@
       </div>
     </a-layout-footer>
   </a-layout>
+
+  <!-- 管理口令弹窗。
+       放在 a-layout 外面：antd 的 Modal 默认 teleport 到 body，
+       留在 layout 里只是多一个不渲染的占位节点，反而干扰 flex 布局。 -->
+  <a-modal v-model:open="tokenOpen" title="管理口令" :width="460" :centered="true">
+    <p class="token-lead">
+      知识库的灌库与删除、RAG 开关，以及历史行程的改写与删除，都会改动数据。
+      这些接口需要一道共享口令，避免任何人打开网页就能误删资料。
+    </p>
+
+    <a-input-password
+      v-model:value="tokenDraft"
+      placeholder="粘贴管理员分配的口令"
+      autocomplete="off"
+      allow-clear
+      @press-enter="saveToken"
+    />
+
+    <p class="token-foot">
+      口令只存在当前标签页，关掉浏览器即失效；不会写进磁盘，也不会出现在网址里。
+      生成行程、检索、查看历史这些读操作不需要口令。
+    </p>
+
+    <template #footer>
+      <a-button v-if="adminTokenSet" class="token-clear" danger type="text" @click="clearToken">
+        清除口令
+      </a-button>
+      <a-button @click="tokenOpen = false">取消</a-button>
+      <a-button type="primary" @click="saveToken">保存</a-button>
+    </template>
+  </a-modal>
 </template>
 
 <script setup lang="ts">
+import { ref } from 'vue';
+import { message } from 'ant-design-vue';
+import { getAdminToken, hasAdminToken, setAdminToken } from '@/services/api';
+
 /**
  * 导航项。
  *
@@ -69,6 +123,53 @@ const NAV_ITEMS = [
   { to: '/history', label: '历史行程' },
   { to: '/knowledge', label: '知识库' },
 ] as const;
+
+// ---------------- 管理口令 ----------------
+//
+// 背景见 services/api.ts 里「管理口令」那一段：后端的写接口加了一道共享口令，
+// 前端负责把它带上。这里只做一件事 —— 提供一个让用户填口令的地方。
+
+/**
+ * 是否已设置口令。
+ *
+ * hasAdminToken() 读的是 sessionStorage，那不是响应式数据源，
+ * 所以用一个 ref 镜像它。写入点只有下面两个函数，
+ * 不存在"别处改了它、这里不知道"的情况。
+ * sessionStorage 是每个标签页独立的，也不需要监听 storage 事件。
+ */
+const adminTokenSet = ref(hasAdminToken());
+const tokenOpen = ref(false);
+const tokenDraft = ref('');
+
+function openTokenDialog() {
+  // 打开时回填：用户点进来多半是想改，先让他看见当前是什么。
+  // input-password 默认打码，需要核对时点右侧小眼睛展开。
+  tokenDraft.value = getAdminToken();
+  tokenOpen.value = true;
+}
+
+function saveToken() {
+  const had = adminTokenSet.value;
+  // 传空串等于清除 —— 所以"不填直接点保存"不会留下一个空口令，
+  // 而是显式地清掉，语义上没有歧义。
+  setAdminToken(tokenDraft.value);
+  adminTokenSet.value = hasAdminToken();
+  tokenOpen.value = false;
+
+  if (!adminTokenSet.value) {
+    message.info(had ? '已清除管理口令，写操作将无法进行' : '口令为空，未做改动');
+  } else {
+    message.success(had ? '管理口令已更新' : '管理口令已保存');
+  }
+}
+
+function clearToken() {
+  setAdminToken('');
+  adminTokenSet.value = false;
+  tokenDraft.value = '';
+  tokenOpen.value = false;
+  message.info('已清除管理口令，写操作将无法进行');
+}
 </script>
 
 <style scoped>
@@ -178,6 +279,90 @@ const NAV_ITEMS = [
   font-weight: var(--fw-semibold);
 }
 
+/* ---------------- 管理口令入口 ----------------
+ * 从属于导航，但视觉层级比三个页面低一档：它是「维护入口」，不是第四个页面。
+ * 用 button 而不是 router-link —— 它打开弹窗，不切换路由。
+ */
+.admin-entry {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 36px;
+  /* 和第三个导航项之间留出距离，再由 ::before 画一条竖线：
+     "从这里开始是另一种入口"。 */
+  margin-left: var(--space-3);
+  padding: 0 var(--space-4);
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  font-family: inherit;
+  font-size: var(--fs-caption);
+  font-weight: var(--fw-medium);
+  color: var(--text-3);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color var(--dur-fast) var(--ease-out),
+    background-color var(--dur-fast) var(--ease-out);
+}
+
+/* 竖分隔线用伪元素而不是 border-left：圆角药丸配上左侧 border，
+   悬停变底色时左边缘会出现一个直角缺口。 */
+.admin-entry::before {
+  content: '';
+  width: 1px;
+  height: 16px;
+  background: var(--line-1);
+}
+
+.admin-entry:hover {
+  color: var(--text-1);
+  background: var(--bg-sunken);
+}
+
+/* 已设置口令时变成品牌色 + 一个绿点。改色是因为
+   "写操作现在可用"是个值得一眼看到的状态。 */
+.admin-entry.is-set {
+  color: var(--brand-600);
+}
+
+.admin-entry.is-set:hover {
+  background: var(--brand-50);
+}
+
+.admin-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--success);
+  flex-shrink: 0;
+}
+
+/* ---------------- 管理口令弹窗 ---------------- */
+.token-lead,
+.token-foot {
+  margin: 0;
+  font-size: var(--fs-caption);
+  line-height: var(--lh-body);
+  color: var(--text-2);
+}
+
+.token-lead {
+  margin-bottom: var(--space-4);
+}
+
+.token-foot {
+  margin-top: var(--space-4);
+  color: var(--text-3);
+}
+
+/* 「清除口令」推到左侧，和右侧的取消/保存分开 —— 它是破坏性操作，
+   不该和「保存」并排站在一起。
+   antd 的 modal footer 是 text-align:end 而不是 flex，所以用 float；
+   这个类挂在自己渲染的按钮上，scoped 样式能命中。 */
+.token-clear {
+  float: left;
+}
+
 /* ---------------- 内容 ---------------- */
 .app-content {
   background: var(--bg-page);
@@ -231,8 +416,13 @@ const NAV_ITEMS = [
     height: 26px;
   }
 
+  /* 窄屏只留图形标，隐藏「途灵 TripMind」文字。
+     顶栏是 brand + 三个导航项 + 管理口令入口的单行布局，
+     这些文字在 375px 宽的手机上放不下 —— 实测宽度会超出视口，
+     表现是整条顶栏被挤爆（这一条在加管理口令入口之前就已经临界了）。
+     图形标 + 页面标题已经足够表明身份。 */
   .brand-name {
-    font-size: var(--fs-body);
+    display: none;
   }
 
   .nav {
@@ -243,6 +433,12 @@ const NAV_ITEMS = [
     min-height: var(--touch-min);
     padding: 0 var(--space-3);
     font-size: var(--fs-caption);
+  }
+
+  .admin-entry {
+    min-height: var(--touch-min);
+    margin-left: var(--space-2);
+    padding: 0 var(--space-2);
   }
 
   .app-content {

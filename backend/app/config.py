@@ -92,6 +92,32 @@ class Settings(BaseSettings):
     # 注入 prompt 的条数。太多会挤占上下文、太少覆盖不到 —— 4 条是权衡后的取值
     rag_top_k: int = 4
 
+    # ---------- 管理接口鉴权 ----------
+    #
+    # 项目**没有用户体系**(行程靠链接分享,这是产品设定,不是缺失),
+    # 所以也不需要完整的登录 + RBAC。但有几类接口一旦公开就等同于把
+    # 后台交出去 —— 实测确认过:部署上线后从公网可以直接
+    #   · POST /api/knowledge/ingest  (带 recreate 就是**清库**)
+    #   · POST /api/knowledge/docs/parse  (未鉴权的文件上传)
+    #   · DELETE /api/knowledge/docs/{id}
+    #   · POST /api/knowledge/rag-toggle  (任意人可开关 RAG)
+    #   · DELETE /api/trip/plans/{id}     (删任意人的行程)
+    # 所以给这些**写操作**加一个共享口令(`X-Admin-Token` 请求头)。
+    #
+    # 只读接口(status / search / sources / 行程列表与详情)不加:
+    # 它们要么是前端正常展示要用的,要么本来就是要分享出去的。
+    #
+    # ⚠️ 没有配置时是 **fail-closed** —— 见 `app/api/deps.py` 的
+    #    `require_admin()`:不配就返回 503,而不是放行。公开部署上
+    #    「忘了配」不该等于「任何人都能清库」。
+    #
+    # 用 AliasChoices 是因为字段叫 `admin_token`,而 .env 里想写成
+    # `TRIPMIND_ADMIN_TOKEN`(带前缀不易和别人的变量撞)。
+    admin_token: str = Field(
+        default="",
+        validation_alias=AliasChoices("TRIPMIND_ADMIN_TOKEN", "admin_token"),
+    )
+
     # ---------- Embedding(硅基流动,OpenAI 兼容) ----------
     embed_model_type: str = "dashscope"
     embed_model_name: str = "BAAI/bge-m3"

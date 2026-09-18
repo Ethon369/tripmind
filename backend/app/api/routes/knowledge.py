@@ -34,15 +34,43 @@ import uuid
 from datetime import datetime
 from typing import Any, Literal, Optional
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 
 from ...config import get_settings, rag_state, set_rag_enabled
 from ...services.doc_parser import ParseError, chunk_document, parse_file, parse_paste
 from ...services.knowledge_service import EMBED_BATCH, get_knowledge_service
 from ...store.doc_store import DocStore
+from ..deps import require_admin
 
 router = APIRouter(prefix="/knowledge", tags=["知识库"])
+
+# ---------------------------------------------------------------------------
+# 哪些端点要管理口令,以及为什么这么分
+# ---------------------------------------------------------------------------
+#
+# **写操作一律要口令**(`dependencies=[Depends(require_admin)]`),
+# **读操作一律不要**。判断标准是"这个调用能不能让服务端的状态发生变化":
+#
+#   要口令:POST /ingest          灌库/清库(recreate 会 drop collection)
+#          GET  /ingest/{id}      灌库任务状态(与上面成对,一并挡掉)
+#          POST /docs/parse       上传文件解析(未鉴权上传 = 磁盘与 CPU 风险)
+#          POST /docs/{id}/ingest 把上传的攻略入库(消耗 embedding 额度)
+#          GET  /docs             列出已上传的攻略(可能含用户私有内容)
+#          GET  /docs/{id}        看某篇攻略的分块
+#          DELETE /docs/{id}      删除上传的攻略
+#          POST /rag-toggle       运行时开关 RAG
+#
+#   不要口令:GET  /status          前端知识库页首屏就要用
+#            POST /search          知识库检索调试台,只读
+#            POST /ingest/preview  只统计条数,不写库不花钱
+#            GET  /sources         内置数据源只读统计
+#
+# ⚠️ 上线时实测确认过:这些接口在公网上是**直接可达**的(nginx 的
+#    `location /api/` 无条件转发),所以不是"内网才需要考虑"的问题。
+#
+# 未配置 TRIPMIND_ADMIN_TOKEN 时这些端点返回 503 而不是放行 ——
+# 理由见 app/api/deps.py。所以本地开发要用知识库页,也得在 .env 里配一个值。
 
 NamespaceFilter = Literal["all", "poi_facts", "city_guides", "uploaded"]
 IngestSource = Literal["frozen", "guides", "all"]
@@ -598,6 +626,7 @@ def _run_ingest(task_id: str, source: IngestSource, recreate: bool) -> None:
     "/ingest",
     response_model=IngestTaskResponse,
     status_code=202,
+    dependencies=[Depends(require_admin)],
     summary="开始灌库（后台任务）",
     description=(
         "在后台线程里执行灌库,立即返回 task_id,用 GET /knowledge/ingest/{task_id} 轮询进度。"
@@ -663,6 +692,7 @@ def knowledge_ingest(body: IngestRequest):
 @router.get(
     "/ingest/{task_id}",
     response_model=IngestTaskResponse,
+    dependencies=[Depends(require_admin)],
     summary="查询灌库任务",
     description="前端按 2 秒左右的间隔轮询这个接口获取进度",
 )
@@ -736,6 +766,7 @@ def _doc_chunk_previews(doc: dict[str, Any]) -> list[DocChunkPreview]:
 @router.post(
     "/docs/parse",
     response_model=DocParseResponse,
+    dependencies=[Depends(require_admin)],
     summary="解析一篇上传的攻略（不入库）",
     description=(
         "上传 Markdown / 纯文本 / PDF(需有文字层)/ 图片(png、jpg、webp 等),或直接粘贴文字。"
@@ -911,6 +942,7 @@ def _run_doc_ingest(task_id: str, doc_id: str) -> None:
     "/docs/{doc_id}/ingest",
     response_model=IngestTaskResponse,
     status_code=202,
+    dependencies=[Depends(require_admin)],
     summary="入库一篇攻略（后台任务）",
     description=(
         "把 parse 过的文档写入向量库,返回 task_id 用 GET /knowledge/ingest/{task_id} 轮询。"
@@ -970,6 +1002,7 @@ def knowledge_doc_ingest(doc_id: str):
 @router.get(
     "/docs",
     response_model=DocListResponse,
+    dependencies=[Depends(require_admin)],
     summary="列出上传的攻略",
 )
 def knowledge_doc_list(limit: int = 100):
@@ -984,6 +1017,7 @@ def knowledge_doc_list(limit: int = 100):
 @router.get(
     "/docs/{doc_id}",
     response_model=DocDetailResponse,
+    dependencies=[Depends(require_admin)],
     summary="查看一篇上传攻略的分块",
 )
 def knowledge_doc_detail(doc_id: str):
@@ -1002,6 +1036,7 @@ def knowledge_doc_detail(doc_id: str):
 @router.delete(
     "/docs/{doc_id}",
     response_model=DocDeleteResponse,
+    dependencies=[Depends(require_admin)],
     summary="删除一篇上传攻略",
     description="同时删除向量库里属于它的所有分块。先删向量库,再删记录。",
 )
@@ -1035,6 +1070,7 @@ def knowledge_doc_delete(doc_id: str):
 @router.post(
     "/rag-toggle",
     response_model=RagToggleResponse,
+    dependencies=[Depends(require_admin)],
     summary="开启/关闭知识库（运行时）",
     description=(
         "运行时覆盖 ENABLE_RAG,不写回 .env —— 评测基线不受影响,重启后恢复 .env 的值。"

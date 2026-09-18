@@ -6,7 +6,7 @@ import re
 import time
 from typing import List, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from ...models.schemas import (
     TripRequest,
@@ -18,6 +18,7 @@ from ...models.schemas import (
     PlanSummary,
 )
 from ..errors import handle_service_errors, to_http_error
+from ..deps import require_admin
 from ...agents.trip_planner_agent import get_trip_planner_agent
 from ...observability import collect_usage, make_observer
 from ...services.llm_service import get_llm
@@ -26,6 +27,33 @@ from ...store import get_plan_store
 router = APIRouter(prefix="/trip", tags=["旅行规划"])
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# 哪些端点要管理口令(与 knowledge.py 的规则一致:写操作要,读操作不要)
+# ---------------------------------------------------------------------------
+#
+#   要口令:PUT    /plans/{plan_id}   覆盖别人的行程内容
+#          DELETE /plans/{plan_id}   删掉别人的行程
+#
+#   不要口令:POST /plan              核心功能,不加就等于网站不能用了
+#            GET  /plans             列表 —— 前端「历史行程」页要用
+#            GET  /plans/{plan_id}   详情 —— **分享链接用的就是这个接口**,
+#                                    加口令等于分享功能失效(产品设定如此)
+#            GET  /health
+#
+# ⚠️ 这里有个**已知且有意接受**的取舍,写清楚免得以后被当成疏漏:
+#
+#   `GET /plans` 会把所有行程的 id 列出来。plan_id 本身是 uuid4().hex
+#   (32 位随机)猜不到,但这个列表把随机性抹平了 —— 也就是说
+#   "拿到列表 → 读/改/删任意行程"这条链是通的,只是后半段现在被口令挡住了。
+#
+#   为什么不干脆把 `GET /plans` 也加上口令?
+#   因为它就是前端「历史行程」页的数据源,加了口令这个页面就废了。
+#   而项目**没有用户体系**(行程靠链接分享是产品设定),所以也说不出
+#   "只列你自己的" —— 服务端根本不知道你是谁。
+#
+#   结论:读接口保持公开、写接口全部上锁。要彻底解决就得引入用户体系,
+#   那超出这个项目的范围了。
 
 
 @router.post(
@@ -497,7 +525,8 @@ def get_plan_detail(plan_id: str):
     "/plans/{plan_id}",
     response_model=PlanDetailResponse,
     summary="更新行程内容",
-    description="保存前端编辑后的行程(增删景点、调整顺序)。不改动成本统计。"
+    description="保存前端编辑后的行程(增删景点、调整顺序)。不改动成本统计。",
+    dependencies=[Depends(require_admin)],
 )
 def update_plan(plan_id: str, plan: TripPlan):
     """回写编辑后的行程。"""
@@ -516,7 +545,8 @@ def update_plan(plan_id: str, plan: TripPlan):
 @router.delete(
     "/plans/{plan_id}",
     summary="删除行程",
-    description="从历史记录中永久删除一个行程"
+    description="从历史记录中永久删除一个行程",
+    dependencies=[Depends(require_admin)],
 )
 def delete_plan(plan_id: str):
     """删除行程。"""

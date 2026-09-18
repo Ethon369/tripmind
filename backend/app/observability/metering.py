@@ -194,8 +194,44 @@ def collect_usage(collector: UsageCollector | None = None) -> Iterator[UsageColl
 class MeteredLLM(HelloAgentsLLM):
     """在框架的 LLM 客户端上加了用量计量。
 
-    行为与原类完全一致,只是把原本被丢掉的 response.usage 接住了。
+    行为与原类几乎一致,只改了两处,都写在这里免得以后看到 `_create_client`
+    的覆写以为是随手加的:
+
+    1. 把原本被丢掉的 `response.usage` 接住(见 `invoke` / `_record`)。
+    2. **关掉 OpenAI SDK 的自动重试**(见 `_create_client`)。
     """
+
+    def _create_client(self) -> Any:
+        """建客户端,但把 SDK 的自动重试关掉。
+
+        ⚠️ 这不是"顺手优化",是必须的 —— 不关的话超时会被放大 3 倍,
+        把整条超时链路顶穿。
+
+        OpenAI SDK 默认 `max_retries=2`,也就是**最多尝试 3 次**。
+        而框架 `_create_client()` 只传了 `timeout`,没传 `max_retries`,
+        所以这个默认值一直在生效。
+
+        对「生成超时」这类错误,重试是没有意义的:同样的 prompt、同样长的
+        输出,第二次一样会超时,只是把总耗时乘以 3。实测到的正是这个形态 ——
+        `LLM_TIMEOUT=60` 时一次 planner 超时,客户端连试 3 次,白等 180 秒:
+
+            elapsed_ms = 239783  (≈ 各阶段 58s + 60s×3)
+            6 次调用都在 20s 内正常返回,只有 planner 那一次在重试
+            错误最终是 "LLM调用失败: Request timed out."
+
+        放大之后会直接突破外层:nginx 的 `proxy_read_timeout` 是 330 秒,
+        而 `LLM_TIMEOUT=180` 配 3 次尝试最坏就是 540 秒 —— 用户等不到前端的
+        友好提示,只会收到一个 nginx 504,同时白占一个 worker 五分多钟。
+
+        该由外层负责的重试交给外层:前端对 5xx 会重试(最多 3 次),那是
+        真正有意义的场景(网络抖动、服务瞬时不可用)。
+
+        不做成参数是因为框架的构造函数没暴露它,而这里手工重建 OpenAI
+        客户端会跟框架的凭据解析逻辑重复一份 —— 后者更容易随升级漂移。
+        """
+        client = super()._create_client()
+        client.max_retries = 0
+        return client
 
     def invoke(self, messages: Messages, **kwargs) -> str:
         import time
