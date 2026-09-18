@@ -160,7 +160,8 @@ LLM_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
 LLM_MODEL_ID=qwen3.7-plus
 AMAP_API_KEY=<高德 Web 服务 Key>
 
-# ⚠️ 必改：换成你的域名，否则浏览器请求会被 CORS 拦掉
+# CORS：**同源部署不需要改**。前端由同一个 Nginx 提供，请求的是相对路径 /api，
+# 属于同源请求，压根不走 CORS。只有把前端单独放到另一个域名时才需要动这里。
 CORS_ORIGINS=https://your-domain.com
 
 # 日志
@@ -550,6 +551,7 @@ sudo tail -f /var/log/nginx/error.log
 | 页面能开，接口全部 502 | 后端没起来 | `systemctl status tripmind`、看 `/var/log/tripmind/err.log` |
 | 提交行程后等 60 秒左右报 504 | Nginx 超时太短 | 按第 5 节把 `proxy_read_timeout` 调到 300s |
 | 生成成功但景点名和坐标是编的 | 高德 MCP 未加载 | 检查 `/api/trip/health` 的 `mcp_tools_count` 是否为 16 |
+| 首次提交行程卡好几分钟，日志停在 `🔗 连接到 MCP 服务器...` | `uvx` 正从官方源装 `amap-mcp-server`（国内极慢），**不是卡死** | 设 `UV_INDEX_URL` 为国内镜像；并确认它真的传进了子进程，见附录第 4 个坑 |
 | 地图区域一片空白 | JS API Key 未配域名白名单 / 未配安全密钥 | 按 6.2 节配置 |
 | 前端改完 `.env` 没生效 | `VITE_` 变量是构建期注入 | 重新 `npm run build` 并刷新浏览器缓存 |
 | 提示"本次未能生成行程内容" | LLM 连不上（Key、额度、网络、代理） | 看 `app.log`；错误原因会随响应一起返回 |
@@ -648,9 +650,12 @@ git clone https://github.com/<你的仓库>.git /opt/tripmind && cd /opt/tripmin
 # 2. 配置
 cp .env.example .env && vi .env
 #    必填:LLM_API_KEY / AMAP_API_KEY / VITE_AMAP_WEB_JS_KEY
-#    改成服务器上的实际访问地址,否则外部访问会被 CORS 拦:
-#      CORS_ORIGINS=http://<服务器公网IP>:8080
-#      HTTP_PORT=8080
+#    可选:HTTP_PORT(默认 8080)
+#
+#    ⚠️ CORS_ORIGINS **不用改**。前端请求的是相对路径 /api,
+#    由 nginx 同源反代到后端 —— 同源请求根本不走 CORS,
+#    所以用 IP:8080 访问时也不会被跨域拦。
+#    只有把前端单独部署到别的域名时才需要动它。
 
 # 3. 启动
 docker compose up -d --build
@@ -740,7 +745,7 @@ docker compose logs -f backend
 
    HTTPS 与高德域名白名单同前文第 6 节。
 
-### 容器化的三个坑（都已在本仓库的配置里处理）
+### 容器化的四个坑（都已在本仓库的配置里处理）
 
 1. **非 root 用户 + 命名卷的属主。** 命名卷第一次创建时，Docker 会把镜像里该路径的
    **属主**复制进卷。所以 `backend/Dockerfile` 里先 `mkdir /data` 并 `chown` 给非 root 用户
@@ -751,6 +756,30 @@ docker compose logs -f backend
    所以容器里这条路径天然成立。但 **`uvx` 第一次运行要联网下载包**，
    缓存目录（`UV_CACHE_DIR`）必须对非 root 用户可写 —— 已在 Dockerfile 里设成 `/app/.uv-cache`。
 3. **`--workers` 必须是 1。** 见 3.5 节：灌库任务状态与 RAG 开关都是**进程内**的。
+4. **`uv` 的包源必须显式传进子进程**（本次部署在阿里云上踩到，最耗时的一个）。
+
+   `uvx` 默认从 `files.pythonhosted.org` 拉 wheel。国内这个是**"能连上但极慢"**：
+   实测每个 `.metadata` 请求要几秒，`amap-mcp-server` 要装几十个包，于是**要好几分钟**。
+   而这段时间后端日志里只有一行：
+
+   ```
+   🔗 连接到 MCP 服务器...
+   ```
+
+   **看起来完全像卡死，其实在下包**；对外表现是"第一次点生成行程一直转圈"。
+
+   解法是把 uv 指到国内源（`UV_INDEX_URL` / `UV_DEFAULT_INDEX`）。但光设环境变量**不够**：
+   HelloAgents 的 `MCPTool._merge_env()` 是**从空字典开始拼**的（`result_env = {}`），
+   **不继承 `os.environ`** —— 容器里设得再对，uvx 子进程也拿不到。
+
+   所以 `mcp_launcher.build_mcp_env()` 主动把 `UV_*` 与前缀无关的代理变量一起传给
+   `MCPTool(env=...)`，并用 `tests/test_mcp_launcher.py` 钉住。改完实测：
+   `/api/trip/health` 从**无限挂起**变成 **6.8 秒**返回 `mcp_tools_count = 16`。
+
+   > 排查这类问题的办法：进容器看 `du -sh /app/.uv-cache` 是否在长。
+   > 一直不动就说明压根没在下载；在长但很慢则是源的问题。
+   > 直接读子进程的环境变量也能一眼看出漏传：
+   > `for p in /proc/[0-9]*; do tr '\0' '\n' < $p/environ | grep ^UV_; done`
 
 ### 更新代码
 

@@ -19,11 +19,22 @@ FROM python:3.12-slim
 # PYTHONDONTWRITEBYTECODE:别在只读层里写 .pyc
 # UV_CACHE_DIR:uvx 第一次会去 PyPI 下 amap-mcp-server,缓存必须可写。
 #   默认放在 ~/.cache/uv,而容器里 HOME 属于 root —— 所以显式挪到 /app 下。
+#
+# ⚠️ UV_INDEX_URL / UV_DEFAULT_INDEX 是**必须的**,不是优化项。
+#   默认源把 wheel 放在 files.pythonhosted.org,国内是"能连上但极慢":
+#   实测每个 .metadata 请求要几秒,几十个包装完要好几分钟,而这段时间
+#   日志里只有一行 `🔗 连接到 MCP 服务器...`,看起来完全像卡死。
+#   跟上面的 PIP_INDEX_URL 同理,做成 ARG 让国外环境能覆盖回官方源。
+#   两个名字都设:UV_INDEX_URL 是旧名(仍生效),UV_DEFAULT_INDEX 是新名。
+ARG UV_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
+
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
-    UV_CACHE_DIR=/app/.uv-cache
+    UV_CACHE_DIR=/app/.uv-cache \
+    UV_INDEX_URL=${UV_INDEX_URL} \
+    UV_DEFAULT_INDEX=${UV_INDEX_URL}
 
 # 国内构建默认用清华源;国外环境可以用 --build-arg 覆盖。
 # 做成 ARG 而不是写死:这是个公开仓库,别人的网络环境未必在国内。

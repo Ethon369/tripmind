@@ -6,7 +6,7 @@ from hello_agents import SimpleAgent
 from hello_agents.tools import MCPTool
 from ..services.llm_service import get_llm
 from ..services.knowledge_service import format_context, get_knowledge_service
-from ..services.mcp_launcher import resolve_uvx_command
+from ..services.mcp_launcher import build_mcp_env, resolve_uvx_command
 from ..models.schemas import TripRequest, TripPlan
 from ..config import get_settings, rag_enabled
 from ..observability import NullObserver
@@ -175,7 +175,10 @@ class MultiAgentTripPlanner:
                 # 绝对路径找 uvx —— 不靠 PATH,所以没激活 venv 也能起来。
                 # 详见 mcp_launcher.py 的说明。
                 server_command=resolve_uvx_command(),
-                env={"AMAP_MAPS_API_KEY": settings.amap_api_key},
+                # build_mcp_env 而不是裸 dict:框架**不从 os.environ 继承**,
+                # 必须把 UV_* 显式传下去,否则 uvx 退回官方源慢到像卡死。
+                # 详见 mcp_launcher.py。
+                env=build_mcp_env(settings.amap_api_key),
                 auto_expand=True
             )
             self.amap_tool.expandable=True

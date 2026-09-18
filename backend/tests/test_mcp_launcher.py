@@ -10,7 +10,12 @@
 `resolve_uvx_command()` 改用 `sys.executable` 定位 uvx(它必定和解释器同目录,
 因为 `uv` 是 requirements.txt 的依赖),从此不依赖 PATH。
 
-下面把这些行为钉住:谁要是把它改回裸命令、或者路径推导写错一层,这里会红。
+`build_mcp_env()` 管的是**另一个**静默故障:子进程环境变量。框架的
+`_merge_env()` 从空字典开始拼、不继承 `os.environ`,所以容器里设好的
+`UV_INDEX_URL` 传不到 uvx 手上,它会退回官方源(国内极慢)。
+
+下面把这些行为钉住:谁要是把它改回裸命令、路径推导写错一层,或者
+把环境变量又收窄回去,这里会红。
 """
 
 from __future__ import annotations
@@ -20,7 +25,11 @@ import sys
 
 import pytest
 
-from app.services.mcp_launcher import AMAP_MCP_PACKAGE, resolve_uvx_command
+from app.services.mcp_launcher import (
+    AMAP_MCP_PACKAGE,
+    build_mcp_env,
+    resolve_uvx_command,
+)
 
 
 def _fake_interpreter(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
@@ -109,3 +118,96 @@ class Test当前环境:
             f"{exe_dir} 下没有 uvx —— 高德 MCP 工具会静默变成 0 个。"
             f" 跑 `{sys.executable} -m pip install -r requirements.txt` 装上 uv"
         )
+
+
+class Test传给子进程的环境变量:
+    """build_mcp_env() —— 子进程环境**不继承** os.environ,必须显式传。
+
+    在阿里云 ECS 上踩到的真实故障:容器里 `UV_INDEX_URL` 设成了国内镜像,
+    但 `MCPTool._merge_env()` 是从空字典开始拼的,uvx 子进程拿不到它,
+    于是退回 `files.pythonhosted.org` 逐个拉 wheel。国内每个请求几秒,
+    几十个包要好几分钟,而日志里只有一行 `🔗 连接到 MCP 服务器...` ——
+    完全像卡死。下面几条钉住"该传的要传、不该传的不传"。
+    """
+
+    def test_高德Key一定在里面(self, monkeypatch):
+        monkeypatch.delenv("AMAP_MAPS_API_KEY", raising=False)
+
+        env = build_mcp_env("fake-key")
+
+        assert env["AMAP_MAPS_API_KEY"] == "fake-key"
+
+    def test_显式传入的Key覆盖父进程里的同名值(self, monkeypatch):
+        """父进程环境里可能有个旧的 AMAP_MAPS_API_KEY,不能让它赢。"""
+        monkeypatch.setenv("AMAP_MAPS_API_KEY", "旧值")
+
+        env = build_mcp_env("新值")
+
+        assert env["AMAP_MAPS_API_KEY"] == "新值"
+
+    def test_UV开头的变量全部透传(self, monkeypatch):
+        """UV_* 是整个修复的要害 —— 少了 UV_INDEX_URL 就退回慢源。"""
+        monkeypatch.setenv("UV_INDEX_URL", "https://pypi.tuna.tsinghua.edu.cn/simple")
+        monkeypatch.setenv("UV_DEFAULT_INDEX", "https://pypi.tuna.tsinghua.edu.cn/simple")
+        monkeypatch.setenv("UV_CACHE_DIR", "/app/.uv-cache")
+
+        env = build_mcp_env("k")
+
+        assert env["UV_INDEX_URL"] == "https://pypi.tuna.tsinghua.edu.cn/simple"
+        assert env["UV_DEFAULT_INDEX"] == "https://pypi.tuna.tsinghua.edu.cn/simple"
+        assert env["UV_CACHE_DIR"] == "/app/.uv-cache"
+
+    def test_将来新增的UV配置项也能透传(self, monkeypatch):
+        """用前缀而不是写死清单:uv 的配置项还在增加。"""
+        monkeypatch.setenv("UV_PYTHON_INSTALL_MIRROR", "https://example.com/python")
+
+        env = build_mcp_env("k")
+
+        assert env["UV_PYTHON_INSTALL_MIRROR"] == "https://example.com/python"
+
+    @pytest.mark.parametrize(
+        "name",
+        ["HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "ALL_PROXY",
+         "http_proxy", "https_proxy", "no_proxy", "all_proxy"],
+    )
+    def test_代理变量透传(self, monkeypatch, name):
+        """需要代理才能出网的环境(企业网络/部分云主机)少了它就是连不上。
+
+        小写那几个在 Linux 上是**独立的**变量,不能只收大写形式。
+
+        ⚠️ 所以断言不能直接 ``env[name]``:Windows 的 `os.environ` 本身
+        大小写不敏感,会把键统一转成大写,小写形式读出来是大写。
+        这不是缺陷(Windows 上大写一样生效),只是断言得忽略大小写。
+        """
+        monkeypatch.setenv(name, "http://proxy.internal:3128")
+
+        env = build_mcp_env("k")
+
+        matched = [k for k in env if k.upper() == name.upper()]
+        assert matched, f"{name} 没传给子进程 —— 有代理才能出网的环境会直接连不上"
+        assert env[matched[0]] == "http://proxy.internal:3128"
+
+    @pytest.mark.parametrize(
+        "name",
+        ["LLM_API_KEY", "EMBED_API_KEY", "UNSPLASH_SECRET_KEY",
+         "TRIPMIND_DB", "RUNS_DIR", "PATH"],
+    )
+    def test_无关的敏感变量不传过去(self, monkeypatch, name):
+        """子进程是第三方包,不该顺带拿到 LLM Key、数据库路径这些。
+
+        PATH 也在列表里:它是"没有前缀也没有被显式列入"的对照组 ——
+        顺带说明这个函数**不是**把 os.environ 整个倒过去。
+        """
+        monkeypatch.setenv(name, "敏感值")
+
+        env = build_mcp_env("k")
+
+        assert name not in env
+
+    def test_返回值全是字符串(self, monkeypatch):
+        """subprocess 的 env 只能是 str→str,混进非字符串会直接起不来。"""
+        monkeypatch.setenv("UV_SOMETHING", "1")
+
+        env = build_mcp_env("")
+
+        assert all(isinstance(k, str) and isinstance(v, str) for k, v in env.items())

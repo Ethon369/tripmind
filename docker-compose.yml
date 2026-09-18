@@ -36,6 +36,16 @@ services:
       HOST: 0.0.0.0
       PORT: "8001"
 
+      # uv 的包源。uvx 第一次要在容器里装 amap-mcp-server,
+      # 默认从 files.pythonhosted.org 拉几十个 wheel + .metadata ——
+      # 阿里云 ECS 实测**能连上但极慢**,每个 .metadata 请求要几秒,
+      # 整个装完要好几分钟。表现是"第一次点生成行程一直转圈",
+      # 而且日志停在 `🔗 连接到 MCP 服务器...` 看不出在干嘛。
+      # 指到国内镜像后索引和包体走同一个源,几秒装完。
+      # 两个名字都设:UV_INDEX_URL 是旧名(仍生效),UV_DEFAULT_INDEX 是新名。
+      UV_INDEX_URL: ${UV_INDEX_URL:-https://pypi.tuna.tsinghua.edu.cn/simple}
+      UV_DEFAULT_INDEX: ${UV_DEFAULT_INDEX:-https://pypi.tuna.tsinghua.edu.cn/simple}
+
     volumes:
       # 只有这一处需要持久化。data/frozen 与 data/knowledge_base 是**只读输入**,
       # 已经打进镜像了,所以卷只挂 /data,不会把它们挡住。
