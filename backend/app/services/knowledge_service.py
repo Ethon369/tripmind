@@ -358,6 +358,9 @@ class MilvusKnowledgeStore:
         self.collection = collection
         self.dimension = dimension
         self._client: Any = None
+        # collection 是否已确认加载到内存。见 `_ensure_loaded()` ——
+        # 按实例缓存一次,因为 search 是热路径(一次行程生成最多查 3 遍)。
+        self._loaded = False
 
     @property
     def client(self) -> Any:
@@ -370,9 +373,47 @@ class MilvusKnowledgeStore:
     def exists(self) -> bool:
         return bool(self.client.has_collection(self.collection))
 
+    def _ensure_loaded(self) -> None:
+        """检索前把 collection 加载进内存。**漏掉这一步会让 RAG 静默失效。**
+
+        Milvus 的 collection 必须先 load 才能 search/get/query。麻烦在于
+        **新建的 collection 会自动加载**,所以"灌完库马上检索"一切正常 ——
+        问题只在**进程重启之后**暴露:从磁盘恢复出来的 collection 是
+        `released` 状态,此时检索抛
+
+            code=101 Collection 'xxx' is in state 'released';
+                     call load() before search/get/query
+
+        (实测:用两个独立进程分别写和读同一个 Milvus Lite 库复现。)
+
+        为什么这个坑格外难发现,两点叠加:
+
+        1. 它**只在重启后出现**,同一进程里怎么测都是好的;
+        2. `has_collection` 和 `get_collection_stats` **不需要 load** ——
+           于是知识库状态页会兴高采烈地显示 `count: 1750`、`available: true`,
+           而检索其实一条都返回不了。再加上 `KnowledgeService.retrieve()`
+           把异常吞掉(那是 RAG 降级的正确设计),最终表现是
+           **行程照常生成、只是再也不引用知识库** —— 没有任何报错。
+
+        写操作不受影响(`upsert` / `delete` / `flush` 在 released 上实测可用),
+        所以只有这里需要管。
+
+        按实例缓存:load 是幂等的,但没必要每次检索都发一次 RPC。
+        """
+        if self._loaded:
+            return
+        if not self.exists():
+            # 这层还没建(uploaded 层的常态)。**不缓存**,等它被建出来再加载。
+            return
+        self.client.load_collection(self.collection)
+        self._loaded = True
+
     def drop(self) -> None:
         if self.exists():
             self.client.drop_collection(self.collection)
+        # 删掉之后 `_loaded` 就过期了:下次 ensure_collection 会重建一个
+        # 全新的 collection,必须重新走一遍加载判断。
+        self._loaded = False
 
     def ensure_collection(self, recreate: bool = False) -> None:
         """建 collection(带索引)。
@@ -435,6 +476,25 @@ class MilvusKnowledgeStore:
         return deleted
 
     def search(self, vector: list[float], top_k: int) -> list[dict]:
+        """检索。**collection 还没建时返回空列表,不抛异常。**
+
+        与 `count()` / `delete()` 一样先查 `exists()` —— 这一点不是可有可无的:
+
+        `uploaded` 层在「还没上传过任何攻略」时 collection 是不存在的,这是
+        **完全正常的初始状态**,不是故障。但 Milvus 对不存在的 collection 检索
+        会抛 `MilvusException: collection 'xxx' does not exist`,而
+        `KnowledgeService.retrieve()` 会把任何异常都记进 `last_error` 并打印告警
+        —— 于是三个层里只要有一层是空的,每次检索、每次行程生成都会刷一条
+        「检索失败(uploaded)」,检索接口还会返回 `partial: true`。
+        真正出故障时反而没人注意到那条告警了。
+        """
+        if not self.exists():
+            return []
+
+        # ⚠️ 进程重启后 collection 是 released 状态,不 load 就检索会抛
+        #    code=101。详见 `_ensure_loaded()`。
+        self._ensure_loaded()
+
         hits = self.client.search(
             self.collection,
             data=[vector],

@@ -62,6 +62,39 @@ huggingface_hub>=0.25.0
 # pymilvus 3.x 是给 Milvus 3.x 服务端用的,不要升。
 pymilvus>=2.5,<2.6
 #
+# ⚠️ milvus-lite **不要钉上界**,这是踩过坑的:
+#
+#    pymilvus 只声明 `milvus-lite>=2.4.0`(没有上界),所以默认装最新 3.x。
+#    曾经为了修 `list_collections` 把它钉成 `<2.6`,结果拿到 2.5.1 ——
+#    而 2.5.x 还在用 `from pkg_resources import ...`,偏偏 **setuptools 81+
+#    已经把 pkg_resources 移除了**(镜像里是 84),于是 import 就崩,
+#    连 Milvus Lite 都起不来,**比不钉更糟**。
+#
+#    现在的约定:**不钉上界,并且自己不去调 `list_collections`**。
+#
+#    pymilvus 2.5.x 与 milvus-lite 3.x 确实有 protobuf 版本差,但影响面
+#    **只有一个方法**:`list_collections` 会抛
+#      `ShowCollectionsResponse has no "shards_num" field`
+#    (pymilvus 2.5.18 + milvus-lite 3.2.1 实测)。曾在生产镜像里逐个方法验过:
+#
+#      MilvusClient / create_collection / has_collection / upsert / flush /
+#      search / get_collection_stats / delete / drop_collection  —— 13/13 通过
+#      list_collections                                          —— 唯一失败项
+#
+#    所以"本地文件模式必抛"是错的,只有 `list_collections` 不能用。
+#    需要知道有哪些 collection 时改用 `has_collection`
+#    (见 scripts/check_rag_env.py 的 [1/4] 段)。
+#    这个结论有保质期:pymilvus 或 milvus-lite 一升级就可能变,
+#    所以冒烟验证里保留了这一段,而不是当成一次性结论写死了事。
+#
+#    `>=3.0` 是**下限**而不是上限:它保证不会退回那个装不起来的 2.x,
+#    同时给未来留出版本空间。
+#
+#    平台标记必须和 pymilvus 自己的写法一致(`sys_platform != "win32"`)
+#    —— milvus-lite 没有 Windows 包,不排除的话 Windows 上会直接装不上。
+#    本机开发用的是远端 Milvus,Windows 侧本来也不需要它。
+milvus-lite>=3.0; sys_platform != "win32"
+#
 # 带 [pdf] extra 是因为它提供上传攻略的 PDF 解析后端(pdfminer-six /
 # pdfplumber)。不装的话上传 PDF 会得到一句明确的提示,不会崩。
 markitdown[pdf]>=0.0.1

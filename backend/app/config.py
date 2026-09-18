@@ -3,7 +3,7 @@
 import os
 from pathlib import Path
 from typing import List
-from pydantic import AliasChoices, Field
+from pydantic import AliasChoices, Field, model_validator
 from pydantic_settings import BaseSettings
 from dotenv import load_dotenv
 
@@ -56,7 +56,23 @@ class Settings(BaseSettings):
     # 而框架**完全不支持 Milvus**(memory/storage 下只有 qdrant/neo4j/document 三个),
     # 且 create_rag_pipeline() 签名里没有 store 参数、无条件 new QdrantVectorStore,
     # 没有任何注入点。所以检索层由 app/services/knowledge_service.py 自己写。
-    milvus_uri: str = "http://localhost:19530"
+    # ⚠️ 这一项**不能**只用裸名 `MILVUS_URI`:
+    #    pymilvus 自己也读这个环境变量,而且是在 **import 时**读的
+    #    (`pymilvus/settings.py`: `MILVUS_URI = os.getenv("MILVUS_URI", ...)`),
+    #    然后把它**当远端地址**解析。所以当我们要用本地文件跑 Milvus Lite
+    #    (uri 写 `xxx.db`)时,`MILVUS_URI` 这个名字一旦出现在环境里,
+    #    pymilvus 在初始化阶段就会先抛
+    #        Illegal uri: [...], expected form 'http[s]://...'
+    #    —— 根本走不到它后面"本地文件 → 起 Lite"那个分支
+    #    (`pymilvus/orm/connections.py`,两者相隔约 200 行)。
+    #
+    #    `MILVUS_URI` 仍留在别名列表里做兜底:**远端部署**用它本来就是
+    #    http URL,与 pymilvus 的用法不冲突,老部署脚本不用改。
+    #    本地文件场景请用 `TRIPMIND_MILVUS_URI`(声明在前的优先)。
+    milvus_uri: str = Field(
+        default="http://localhost:19530",
+        validation_alias=AliasChoices("TRIPMIND_MILVUS_URI", "MILVUS_URI", "milvus_uri"),
+    )
 
     # collection 名字里带维度,是为了防止"换了 embedding 模型但忘了重建库":
     # 维度不匹配时 Milvus 不会报错,而是写入/检索结果全乱 —— 属于静默失败。
@@ -107,6 +123,39 @@ class Settings(BaseSettings):
     # ---------- 功能开关(供评测做 A/B 对比) ----------
     enable_rag: bool = False
     agent_mode: str = "pipeline"
+
+    @model_validator(mode="after")
+    def _assert_lite_uri_not_shadowed(self):
+        """`MILVUS_URI` 里如果是**本地路径**,就必须拦住。
+
+        判断依据只有一条:`MILVUS_URI` 的值是不是能被当成远端地址解析。
+        因为 pymilvus 在 import 时就读它、并**无条件**按远端地址解析
+        (`pymilvus/orm/connections.py` 里 `__parse_address_from_uri`),
+        一旦 `urlparse(值).netloc` 为空就抛
+        `Illegal uri: [...], expected form 'http[s]://...'`。
+
+        注意它**与本项目自己用哪个 uri 无关** —— 就算我们把值放在
+        `TRIPMIND_MILVUS_URI` 里,pymilvus 照样会去解析 `MILVUS_URI`。
+        所以这里只看那一个变量,不看 `self.milvus_uri`。
+
+        报错信息完全指不到"名字撞了"这件事,排查时会一直以为是路径写错,
+        所以宁可**在启动时**用一句说得清的话失败(与"启动时集中校验、
+        快速失败"的约定一致),也不要等用户点开知识库才看到莫名其妙的报错。
+        """
+        shadow = (os.environ.get("MILVUS_URI") or "").strip()
+        # 有 "://" 就说明是给 pymilvus 用的远端地址,正常用法,放行
+        if not shadow or "://" in shadow:
+            return self
+        raise ValueError(
+            f"环境变量 MILVUS_URI={shadow!r} 看起来是**本地路径**,"
+            f"但它是 pymilvus 自己的配置项,要求 http(s) URL。\n"
+            f"    pymilvus 在 import 时就会读它并**按远端地址解析**"
+            f"(pymilvus/settings.py),\n"
+            f"    于是会先抛 'Illegal uri',根本走不到它里面"
+            f"'本地文件 → 起 Milvus Lite'那个分支。\n"
+            f"    改法:本地文件路径改用 TRIPMIND_MILVUS_URI,"
+            f"把 MILVUS_URI 从环境里去掉(或改成 http://host:19530 这样的远端地址)。"
+        )
 
     class Config:
         env_file = ".env"

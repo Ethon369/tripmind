@@ -454,7 +454,62 @@ sudo systemctl restart tripmind
 
 ## 8. 可选：知识库（Milvus）
 
-不开启知识库时跳过本节即可，**主流程完全不受影响**（`ENABLE_RAG=false`）。
+不开启知识库时跳过本节即可，**主流程完全不受影响**（`ENABLE_RAG=false`，
+知识库页会显示「不可用」—— 这是预期行为，不是故障）。
+
+两种落地方式，**按部署环境的资源来选**：
+
+| | (A) 本地嵌入式 Milvus Lite | (B) 远端 Milvus standalone |
+|---|---|---|
+| 额外容器 | **0** | 3 个（etcd + minio + milvus） |
+| 额外内存 | 几十 ~ 几百 MB（进程内） | **2 ~ 4 GB** |
+| 规模 | 约百万向量级，**单进程** | 生产级、可分布式 |
+| 适合 | 单机 / 小内存 ECS / demo | 有独立向量库、要多副本 |
+
+> ⚠️ **小内存机器请优先考虑 (A)。** 3 个容器在 2 核 2G 这种规格上会把整机压垮，
+> 症状是**内核还在握手、但所有用户态进程都响应不了**（SSH 卡在 banner exchange）。
+
+---
+
+### 8.1 方式 A：本地嵌入式 Milvus Lite（单机推荐）
+
+不需要 Docker，也不需要任何额外服务：`pymilvus` 的 `MilvusClient` 在 uri 是**本地
+`.db` 文件路径**时会自动起一个嵌入式实例。`milvus-lite` 已随 `requirements.txt` 装好。
+
+```ini
+ENABLE_RAG=true
+TRIPMIND_MILVUS_URI=/data/tripmind_milvus.db    # 指向持久化目录
+EMBED_API_KEY=<硅基流动 Key>
+```
+
+> ⚠️ **变量名不是风格问题，写错必崩。**
+> `MILVUS_URI` 是 **pymilvus 自己的**环境变量，它要求值是 http(s) URL。
+> 本地文件路径写进 `MILVUS_URI` 的话，pymilvus 在 import 时就会先抛
+> `Illegal uri: [...], expected form 'http[s]://...'`，
+> **根本走不到它自己里面「本地文件 → 起 Lite」那个分支**
+> （`pymilvus/orm/connections.py`，两者相隔约 200 行）。
+> 所以本地文件必须用 `TRIPMIND_MILVUS_URI`；`config.py` 里有启动期护栏会把这个错误
+> 提前说清楚，不会让你对着「Illegal uri」猜。
+>
+> 内存装好后 `TRIPMIND_MILVUS_URI` 指向的目录必须**可写**。
+> Docker 部署下用 `/data/...`（命名卷），这样 `docker compose down` 不会丢数据。
+
+**取舍要心里有数**：Lite 是嵌入式的 —— 单进程、不能多副本、规模在百万向量级。
+本项目 `--workers` 本来就钉死为 1，所以不构成新增约束；但**它不能当生产集群用**。
+对外描述时别说成「部署了 Milvus 集群」。
+
+有一个**会实际影响操作方式**的后果要说在前面：Lite 对数据目录加**独占文件锁**，
+所以**后端跑着的时候，灌库脚本不能直接连同一个 `.db`**
+（会报 `DataDirLockedError`）。Docker 部署下用 HTTP 灌库接口，
+或先停后端再起一次性容器 —— 具体见 8.3。
+
+另一个后果更隐蔽，值得单独记住：**重启后 collection 会变成「未加载」状态，
+必须先 `load()` 才能检索。** 代码里已经处理（`MilvusKnowledgeStore._ensure_loaded()`），
+但出问题时要知道往哪看 —— 详见 8.3 末尾的「重启后的静默失效」。
+
+---
+
+### 8.2 方式 B：远端 Milvus standalone
 
 Milvus standalone 需要 Docker，且是 **3 个容器**（etcd + minio + milvus），对内存有一定要求。
 
@@ -480,18 +535,118 @@ MILVUS_URI=http://localhost:19530
 EMBED_API_KEY=<硅基流动 Key>
 ```
 
-灌库（会调用 embedding 接口，产生少量费用）：
+> Docker 部署下后端在**容器里**，`localhost` 指向容器自己 ——
+> 要用 `MILVUS_URI=http://host.docker.internal:19530` 才能指向宿主机。
+
+---
+
+### 8.3 灌库（两种方式相同）
+
+会调用 embedding 接口，产生少量费用。**灌库是幂等的**（用 `upsert`），重跑不会重复。
+实测 1780 条（1750 POI + 30 攻略块）约 **46 秒**、56 次批量请求。
+
+**先自检再看条数，最后才真灌：**
 
 ```bash
 cd /opt/tripmind/backend
-./venv/bin/python scripts/check_rag_env.py                  # 环境自检，六项全绿再继续
+./venv/bin/python scripts/check_rag_env.py                  # 环境自检，全绿再继续
 ./venv/bin/python scripts/ingest_knowledge.py --dry-run     # 先看条数，不花钱
 ./venv/bin/python scripts/ingest_knowledge.py --source=all
 ```
 
-> 灌库脚本也可通过前端「知识库」页面上传文档来替代。
+> ⚠️ **Docker + 方式 (A) 时上面这条 CLI 灌库必然失败 —— 改用 HTTP 接口。**
 >
-> ⚠️ Milvus 与后端通过 `localhost` 通信，因此两者必须在**同一台机器**上（或改 `MILVUS_URI` 指向独立部署的实例）。
+> Milvus Lite 对数据目录加的是**独占文件锁**（`fcntl.flock`，见
+> `milvus_lite/db.py` 的 `_acquire_lock`）。后端容器已经持着
+> `/data/tripmind_milvus.db` 的锁，再 `docker compose exec` 起一个进程去开同一个
+> 文件，会直接抛：
+>
+> ```
+> milvus_lite.exceptions.DataDirLockedError:
+>   another process holds the lock on '/data/tripmind_milvus.db'
+> ```
+>
+> 这不是配置错误，是 Lite 的单进程模型的固有约束，**没法绕过**。
+> 正确做法是用项目自带的进程内灌库接口（在持锁的后端进程里跑后台线程）：
+>
+> ```bash
+> # 启动灌库任务，立即返回 task_id
+> curl -s -X POST http://127.0.0.1:8080/api/knowledge/ingest \
+>      -H 'Content-Type: application/json' -d '{"source":"all"}'
+>
+> # 拿 task_id 轮询进度（state: pending → running → done / failed）
+> curl -s http://127.0.0.1:8080/api/knowledge/ingest/<task_id>
+> ```
+>
+> 真要用 CLI 也可以，但得**先停后端**再起一个一次性容器：
+>
+> ```bash
+> docker compose stop backend
+> docker compose run --rm backend python scripts/ingest_knowledge.py --source=all
+> docker compose start backend
+> ```
+>
+> 方式 (B) 远端 Milvus 没有这个限制，`docker compose exec` 可以直接用。
+>
+> 灌库脚本也可通过前端「知识库」页面上传文档来替代。
+
+**验收**：`GET /api/knowledge/status` 应当返回 `available: true`、`reason: "ok"`，
+且三层 collection 的计数不再为 `null`。若仍是 `false`，`reason` 里会带具体原因。
+
+再确认检索真的能命中（`hits` 非空、`score` 在 0.6~0.7 之间算正常）：
+
+```bash
+curl -s -X POST http://127.0.0.1:8080/api/knowledge/search \
+     -H 'Content-Type: application/json' \
+     -d '{"query":"杭州 历史文化 景点","namespace":"all","top_k":3}'
+```
+
+> `uploaded` 层在没上传过攻略时 collection 不存在：`/api/knowledge/status` 里它会显示
+> `exists: false / count: 0`，检索返回体里 `namespace_counts.uploaded` 是 `0`
+> —— 都是**正常初始状态，不是故障**。
+> 但三层里只要有一层没建，检索接口**不应**返回 `partial: true` 或错误信息；
+> 若返回了，说明 `MilvusKnowledgeStore.search()` 的 `exists()` 守卫丢了
+> （`count()` / `delete()` 都有，三处必须一致）。
+
+#### ⚠️ 重启后的静默失效：collection 必须先 load 才能检索
+
+**这是本项目踩过的最隐蔽的一个坑，值得单独记住。**
+
+Milvus 的 collection 必须先加载到内存才能 `search` / `get` / `query`。
+新建的 collection 会自动加载，所以「灌完库当场检索」一切正常 ——
+问题只在**进程重启之后**暴露：从磁盘恢复出来的 collection 是 `released` 状态，检索抛
+
+```
+code=101 Collection 'trip_city_guides_1024' is in state 'released';
+         call load() before search/get/query
+```
+
+为什么极难发现，两点叠加：
+
+1. **只在重启后出现** —— 同一进程里怎么测都是好的，`docker compose restart` 一下就复发；
+2. **相关接口全都看起来正常** —— `has_collection` 和 `get_collection_stats` **不需要 load**，
+   于是知识库状态页会显示 `available: true`、`count: 1750`，只有检索悄悄返回空。
+   再加上 `retrieve()` 会吞掉异常（那是 RAG 降级的正确设计），
+   最终表现是**行程照常生成、只是再也不引用知识库**，全程没有任何报错。
+
+代码里的处理在 `MilvusKnowledgeStore._ensure_loaded()`：检索前确认加载，
+并按实例缓存（检索是热路径，一次行程生成最多查 3 遍，不该每次发 RPC）。
+
+**验证方法**（改完任何与知识库有关的代码，重启后都该跑一遍）：
+
+```bash
+# ⚠️ 重启后端，然后检索 —— 必须命中，不能是 0 条
+docker compose restart backend
+sleep 25
+curl -s -X POST http://127.0.0.1:8080/api/knowledge/search \
+     -H 'Content-Type: application/json' \
+     -d '{"query":"杭州 西湖","namespace":"all","top_k":3}' | python3 -m json.tool
+```
+
+看到 `hits` 非空才算过。光看 `/api/knowledge/status` 的 `count` 是**验证不出来**的。
+
+> 附带确认：写操作（`upsert` / `delete` / `flush`）在 `released` 状态下**正常**，
+> 只有检索类操作需要 load —— 所以重灌库不受这个坑影响。
 
 ---
 

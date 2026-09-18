@@ -11,7 +11,9 @@ RAG 的**检索质量**没法在单测里验证(那要真调 embedding 接口,�
 比 embedding 模型本身高得多。
 
 不测的部分(需要真服务,归 `scripts/ingest_knowledge.py` 的冒烟验证管):
-`MilvusKnowledgeStore` 的连接与读写、`KnowledgeService.ingest_*`。
+`MilvusKnowledgeStore` 的**真实读写**、`KnowledgeService.ingest_*`。
+`MilvusKnowledgeStore.search` 的**控制流**在文件末尾用假客户端测了 ——
+"collection 不存在时不该调用 search" 这条不需要真 Milvus 就能验证。
 """
 
 from __future__ import annotations
@@ -25,6 +27,7 @@ from app.config import get_settings
 from app.models.schemas import TripRequest
 from app.services.knowledge_service import (
     KnowledgeHit,
+    MilvusKnowledgeStore,
     build_retrieval_query,
     fit_utf8,
     format_context,
@@ -514,3 +517,140 @@ class TestAliasesAgainstRealData:
                 if f"{loc[0]},{loc[1]}" not in poi_to_text(p):
                     bad.append(p.get("name"))
         assert not bad, f"有坐标但没进文本: {bad[:5]}"
+
+
+# ===========================================================================
+# MilvusKnowledgeStore —— 检索引擎相关的两条控制流
+#
+#   1. 未建的 collection 不是故障（应当静默返回空）
+#   2. 重启后 released 的 collection 必须先 load 才能检索
+#
+# 两条都是「不写测试就一定会复发」的类型：它们都不报错、只让检索变差。
+# ===========================================================================
+
+
+class _FakeMilvusClient:
+    """只实现 `has_collection` / `load_collection` / `search`,用来验证控制流。
+
+    用假客户端而不是真 Milvus:这里要证明的是「什么时候**不该**调用某个方法」,
+    真起一个 Milvus 慢得多,还证明不了更强的结论 —— 真实链路上的读写由部署后的
+    冒烟验证覆盖。
+    """
+
+    def __init__(self, exists: bool):
+        self._exists = exists
+        self.search_calls = 0
+        self.load_calls = 0
+
+    def has_collection(self, name: str) -> bool:
+        return self._exists
+
+    def load_collection(self, name: str) -> None:
+        self.load_calls += 1
+
+    def search(self, *args, **kwargs):
+        self.search_calls += 1
+        return [
+            [
+                {
+                    "distance": 0.9,
+                    "entity": {"text": "西湖", "source": "s.md", "heading_path": "杭州"},
+                }
+            ]
+        ]
+
+    def drop_collection(self, name: str) -> None:
+        self._exists = False
+
+
+def _store_with(exists: bool) -> tuple[MilvusKnowledgeStore, _FakeMilvusClient]:
+    """造一个注入了假客户端的 store。
+
+    直接赋值 `_client` 以绕开 `client` 属性里的懒连接 —— 单测不该真起 Milvus。
+    """
+    store = MilvusKnowledgeStore(uri="/tmp/never_used.db", collection="c", dimension=4)
+    fake = _FakeMilvusClient(exists)
+    store._client = fake
+    return store, fake
+
+
+class TestMilvusStoreSearchOnMissingCollection:
+    """`uploaded` 层在没上传过攻略时 collection 是不存在的 —— 这是**正常初始状态**。
+
+    生产上实测到的症状:三层里只有两层已建,于是每次检索都返回
+    `partial: true` 加一句 `检索失败(uploaded): ... does not exist`,
+    日志里每次行程生成都刷一条告警。真出故障时反而看不见那条告警了。
+    """
+
+    def test_collection不存在时返回空列表且不调用search(self):
+        store, fake = _store_with(exists=False)
+
+        assert store.search([0.0] * 4, top_k=3) == []
+        assert fake.search_calls == 0
+
+    def test_collection不存在时也不去load(self):
+        """没这层就没必要 load —— 而且**不能缓存**加载状态,
+        否则将来这层被建出来时会被误判成"已加载"。"""
+        store, fake = _store_with(exists=False)
+
+        store.search([0.0] * 4, top_k=3)
+
+        assert fake.load_calls == 0
+        assert store._loaded is False
+
+    def test_collection存在时照常返回结果(self):
+        """反向用例:守卫若写得过宽会让检索**永远**返回空 —— 那比原 bug 更严重。"""
+        store, fake = _store_with(exists=True)
+
+        rows = store.search([0.0] * 4, top_k=3)
+
+        assert fake.search_calls == 1
+        assert rows == [{"content": "西湖", "score": 0.9, "source": "s.md", "heading_path": "杭州"}]
+
+
+class TestMilvusStoreLoadsBeforeSearch:
+    """重启后 collection 是 `released` 状态,不 load 就检索会抛 code=101。
+
+    这个坑的可怕之处在于它**不报错**:`has_collection` 与
+    `get_collection_stats` 都不需要 load,于是状态页显示 `count: 1750`、
+    `available: true`,只有检索悄悄返回空 —— 行程照常生成,只是不再引用知识库。
+    """
+
+    def test_检索前会先load(self):
+        store, fake = _store_with(exists=True)
+
+        store.search([0.0] * 4, top_k=3)
+
+        assert fake.load_calls == 1
+
+    def test_load只做一次_后续检索不重复load(self):
+        """检索是热路径:一次行程生成最多查 3 遍,不该每次都发 load 的 RPC。"""
+        store, fake = _store_with(exists=True)
+
+        store.search([0.0] * 4, top_k=3)
+        store.search([0.0] * 4, top_k=3)
+        store.search([0.0] * 4, top_k=3)
+
+        assert fake.search_calls == 3
+        assert fake.load_calls == 1
+
+    def test_drop之后加载状态要失效(self):
+        """drop 之后 collection 没了;若 `_loaded` 还留着 True,
+        重建出来的新 collection 就会被当成已加载 —— 检索再次静默失败。"""
+        store, fake = _store_with(exists=True)
+        store.search([0.0] * 4, top_k=3)  # 触发一次 load,让 _loaded 变 True
+        assert store._loaded is True
+
+        store.drop()
+
+        assert store._loaded is False
+
+    def test_drop后重建_会重新load(self):
+        store, fake = _store_with(exists=True)
+        store.search([0.0] * 4, top_k=3)
+
+        store.drop()
+        fake._exists = True  # 模拟 ensure_collection 把它重新建出来
+        store.search([0.0] * 4, top_k=3)
+
+        assert fake.load_calls == 2

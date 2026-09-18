@@ -90,17 +90,28 @@ services:
     restart: unless-stopped
 
 # ===========================================================================
-# 知识库(RAG)默认**没有**纳入这个 compose —— 见 docs/DEPLOYMENT.md
+# 知识库(RAG)默认**没有**纳入这个 compose —— 见 docs/DEPLOYMENT.md 第 8 节
 # ===========================================================================
-# Milvus standalone 自己就是三个容器(etcd + minio + milvus),塞进来会让
-# `docker compose up` 变成"起 5 个容器、占掉 2~4 GB 内存",而 RAG 是可选的
-# —— 首次体验不该被它拖累。
+# 原因是 Milvus standalone 自己就是三个容器(etcd + minio + milvus),
+# 塞进来会让 `docker compose up` 变成"起 5 个容器、占掉 2~4 GB 内存",
+# 而 RAG 是可选的 —— 首次体验不该被它拖累。
+# 小内存机器上那 2~4 GB 甚至会把整机压垮(内核还在握手、用户态全无响应)。
 #
-# 想用的话:单独把 Milvus 跑起来,然后在 .env 里设
-#   ENABLE_RAG=true
-#   MILVUS_URI=http://host.docker.internal:19530
-# 注意是 host.docker.internal 而不是 localhost —— 后端在容器里,
-# 容器内的 localhost 是它自己,不是宿主机。
+# 想用知识库,两条路,**都只需要改 .env**,不用动这个文件:
+#
+# (A) 本地嵌入式 Milvus Lite(单机推荐,零额外容器):
+#       ENABLE_RAG=true
+#       TRIPMIND_MILVUS_URI=/data/tripmind_milvus.db
+#     pymilvus 见到本地 .db 路径会自动起嵌入式实例,数据落在命名卷上。
+#     ⚠️ 必须用 TRIPMIND_MILVUS_URI 这个名字:MILVUS_URI 是 **pymilvus 自己的**
+#        环境变量且要求 http URL,本地路径写进去它会先抛 Illegal uri。
+#        见 backend/app/config.py 里 milvus_uri 字段的注释。
+#
+# (B) 远端 Milvus(自己另起一套 standalone):
+#       ENABLE_RAG=true
+#       MILVUS_URI=http://host.docker.internal:19530
+#     注意是 host.docker.internal 而不是 localhost —— 后端在容器里,
+#     容器内的 localhost 是它自己,不是宿主机。
 
 volumes:
   tripmind-data:

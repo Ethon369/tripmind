@@ -15,6 +15,10 @@ pydantic-settings 按字段名匹配环境变量,写错一个词就等于没配;
 1. 具体别名能用(`TRIPMIND_DB` 和 `DB_PATH` 都生效)
 2. **`.env.example` 里出现的每一个键,都必须有人认识它** —— 这一层才能
    拦住"以后又加了个想当然的变量名"
+
+`milvus_uri` 是同一类问题的**另一种形态**:名字本身没错,但**被别人占用了** ——
+pymilvus 自己也读 `MILVUS_URI`,而且要求它是 http URL。所以本地文件走
+Milvus Lite 时必须换名(`TRIPMIND_MILVUS_URI`),并加一道启动期护栏。
 """
 
 from __future__ import annotations
@@ -95,6 +99,109 @@ class TestDbPathAliases:
         monkeypatch.setenv("TRIPMIND_DB", "/from-tripmind.db")
         monkeypatch.setenv("DB_PATH", "/from-db-path.db")
         assert Settings().db_path == "/from-tripmind.db"
+
+
+# ===========================================================================
+# 一·B、milvus_uri 的别名(和 pymilvus 撞名那个坑)
+# ===========================================================================
+
+
+@pytest.fixture
+def no_milvus_env(monkeypatch):
+    """每个用例都从"环境里没有 MILVUS_URI"开始。
+
+    它是 pymilvus 自己的配置项,开发机上很可能被别的东西设过 ——
+    不清掉的话测出来的结果取决于跑测试的机器,那就不是测试了。
+    """
+    monkeypatch.delenv("MILVUS_URI", raising=False)
+    monkeypatch.delenv("TRIPMIND_MILVUS_URI", raising=False)
+
+
+class TestMilvusUriAliases:
+    """`MILVUS_URI` 这个名字**不能单独给项目用** —— 它会和 pymilvus 撞名。
+
+    pymilvus 在 import 时就 `os.getenv("MILVUS_URI")`
+    (`pymilvus/settings.py`),然后把它**当远端地址**解析。
+    于是拿本地 `.db` 文件跑 Milvus Lite 时,它会在初始化阶段先抛
+    `Illegal uri: [...], expected form 'http[s]://...'` ——
+    根本走不到"本地文件 → 起 Lite"那个分支。所以项目侧改用
+    `TRIPMIND_MILVUS_URI`,把 `MILVUS_URI` 留给 pymilvus / 远端部署。
+    """
+
+    def test_TRIPMIND_MILVUS_URI生效(self, monkeypatch, no_milvus_env):
+        """本地文件走 Lite 必须用这个前缀名,否则 pymilvus 会抢先报错。"""
+        monkeypatch.setenv("TRIPMIND_MILVUS_URI", "/data/tripmind_milvus.db")
+        assert Settings().milvus_uri == "/data/tripmind_milvus.db"
+
+    def test_MILVUS_URI仍然生效(self, monkeypatch, no_milvus_env):
+        """远端部署继续用 MILVUS_URI —— 历史上就是这么配的,不能失效。
+
+        这种场景下它的值本来就是 http URL,与 pymilvus 的用法一致,不冲突。
+        """
+        monkeypatch.setenv("MILVUS_URI", "http://10.0.0.5:19530")
+        assert Settings().milvus_uri == "http://10.0.0.5:19530"
+
+    def test_两个都设时TRIPMIND_MILVUS_URI优先(self, monkeypatch, no_milvus_env):
+        """老部署里可能还留着 `MILVUS_URI=http://...`,它不该抢走优先级。
+
+        而且这个组合是**安全**的:那个值是合法 http URL,pymilvus 能正常解析。
+        (第一版护栏写成了"只要 MILVUS_URI 非空就报错",被这条用例挡下 ——
+        判据应当是"值是不是合法 URL",不是"有没有设"。)
+        """
+        monkeypatch.setenv("TRIPMIND_MILVUS_URI", "/data/lite.db")
+        monkeypatch.setenv("MILVUS_URI", "http://legacy:19530")
+
+        assert Settings().milvus_uri == "/data/lite.db"
+
+    def test_都不设时走默认(self, no_milvus_env):
+        assert Settings().milvus_uri == "http://localhost:19530"
+
+    def test_MILVUS_URI被设成本地路径时_启动就报错(self, monkeypatch, no_milvus_env):
+        """**这条是这个坑的护栏。**
+
+        这个组合下 pymilvus 一定会先抛 `Illegal uri`,而那句话完全指不到
+        "名字撞了"。所以宁可在启动时用一句说得清的话失败,也不要等用户
+        点开知识库才看到一个莫名其妙的报错。
+        """
+        monkeypatch.setenv("TRIPMIND_MILVUS_URI", "/data/lite.db")
+        monkeypatch.setenv("MILVUS_URI", "/data/lite.db")  # 同一个值也不行
+
+        with pytest.raises(ValueError) as excinfo:
+            Settings()
+
+        message = str(excinfo.value)
+        assert "MILVUS_URI" in message
+        assert "TRIPMIND_MILVUS_URI" in message, "报错必须给出改法,否则等于没说"
+
+    def test_项目自己用远端时_MILVUS_URI是路径照样报错(self, monkeypatch, no_milvus_env):
+        """判据是 `MILVUS_URI` 本身,与项目用哪个值**无关**。
+
+        pymilvus 是无条件读那个变量的 —— 就算我们把远端地址放在
+        `TRIPMIND_MILVUS_URI` 里,它照样会去解析 `MILVUS_URI` 并炸掉。
+        所以护栏不能挂在 `self.milvus_uri` 上。
+        """
+        monkeypatch.setenv("TRIPMIND_MILVUS_URI", "http://10.0.0.5:19530")
+        monkeypatch.setenv("MILVUS_URI", "/data/leftover.db")
+
+        with pytest.raises(ValueError):
+            Settings()
+
+    def test_远端URI时_MILVUS_URI存在也不报错(self, monkeypatch, no_milvus_env):
+        """护栏只针对"本地文件"这一种场景,不能误伤远端部署。
+
+        远端 URI 与 pymilvus 的用法一致,两者共存是完全正常的。
+        """
+        monkeypatch.setenv("TRIPMIND_MILVUS_URI", "http://10.0.0.5:19530")
+        monkeypatch.setenv("MILVUS_URI", "http://10.0.0.5:19530")
+
+        assert Settings().milvus_uri == "http://10.0.0.5:19530"
+
+    def test_空值不触发护栏(self, monkeypatch, no_milvus_env):
+        """`MILVUS_URI=` 这种空行(compose 里很常见)不算"设了"。"""
+        monkeypatch.setenv("TRIPMIND_MILVUS_URI", "/data/lite.db")
+        monkeypatch.setenv("MILVUS_URI", "   ")
+
+        assert Settings().milvus_uri == "/data/lite.db"
 
 
 # ===========================================================================
