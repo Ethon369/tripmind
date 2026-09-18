@@ -1,0 +1,20 @@
+# 让「会被容器直接执行或被 docker 解析」的文件在任何平台都以 LF 检出。
+#
+# 起因(实测,不是理论担忧):
+# 本机 core.autocrlf=true,`git clone` 出来的
+# frontend/docker-entrypoint.d/30-runtime-config.sh 第一行变成
+# "#!/bin/sh\r"。而 nginx 官方镜像对 /docker-entrypoint.d/*.sh 是
+# **执行**(`"$f"`)而不是 source —— 于是内核去找解释器 "/bin/sh\r",
+# 报 not found,脚本根本不运行。
+#
+# 后果是静默的:容器正常启动、前端页面正常打开、接口也通,
+# 只有 /config.js 没生成 → 结果页地图空白。没有报错指向这里,
+# 查起来会怀疑高德 Key、怀疑域名白名单,就是想不到是行尾。
+#
+# 只覆盖确实需要 LF 的文件,不用 `* text=auto` —— 那会把整个仓库
+# 重新规范化,产生一个与本次改动无关的巨大 diff。
+*.sh                text eol=lf
+Dockerfile          text eol=lf
+*.dockerignore      text eol=lf
+docker-compose.yml  text eol=lf
+frontend/nginx.conf text eol=lf
