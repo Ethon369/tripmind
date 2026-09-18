@@ -559,6 +559,118 @@ sudo tail -f /var/log/nginx/error.log
 
 ---
 
+## 11. 阿里云 ECS 专章
+
+前 10 节是通用流程。这一节只讲阿里云上**容易漏、且漏了很难查**的几件事。
+
+### 11.1 安全组：阿里云层的防火墙
+
+ECS 有**两道**防火墙，两道都要放行：
+
+1. **安全组**（阿里云控制台 → 云服务器 ECS → 安全组 → 配置规则 → 入方向）
+2. **服务器内的** `ufw` / `firewalld`（如果用 Docker，它还会自己改 iptables）
+
+| 端口 | 用途 | 建议来源 |
+|---|---|---|
+| 22 | SSH | **只放你的出口 IP**，别开 0.0.0.0/0 |
+| 80 / 443 | HTTP / HTTPS | 0.0.0.0/0 |
+| 8080 | Docker 前端（若直接用 IP 访问） | 0.0.0.0/0，或只放你自己 |
+
+> 症状对照：**服务器上 `curl 127.0.0.1:8080` 通、外面访问不通** → 一定是安全组没放行，
+> 不是服务没起。这条能省掉一轮"重启服务"的无效排查。
+
+### 11.2 系统与规格
+
+- 系统：Ubuntu 22.04 / 24.04 LTS 最省事（本文命令按此写）；Alibaba Cloud Linux 也兼容，
+  把 `apt` 换成 `dnf` 即可
+- 规格：**RAG 关闭时 2 核 2G 够用**。本项目 RAG 默认关，Docker 部署也没带 Milvus，
+  所以小规格能跑。要开知识库得另起 Milvus(3 个容器)，建议 4G 起
+
+### 11.3 装 Docker
+
+```bash
+curl -fsSL https://get.docker.com | sudo sh
+sudo usermod -aG docker $USER && newgrp docker
+docker compose version      # 需要 v2 的 compose 子命令
+```
+
+> 阿里云的容器镜像加速（`/etc/docker/daemon.json`）**对这个项目用处不大** ——
+> 我们的镜像是从源码本地构建的，只有基础镜像（python / node / nginx）需要拉。
+> 真正需要换源的是构建时用的 pip 与 npm，已经在 `docker-compose.yml` 里做成
+> `PIP_INDEX_URL` / `NPM_REGISTRY` 两个可覆盖的参数（默认就是国内源）。
+
+### 11.4 ⚠️ 高德的两个 Key，各有一套来源限制
+
+这是部署到服务器后**最容易 404/失败却查不到原因**的地方。
+
+**Web 服务 Key（后端用）—— 可能有 IP 白名单**
+
+控制台里可以给这类 Key 配"IP 白名单"。一旦配了，**只有列表里的 IP 能调**，
+而服务器的公网 IP 和你开发机的出口 IP 是**两个不同的 IP**。
+
+部署后立刻用这条命令验（在后端容器里执行，或在服务器上执行）：
+
+```bash
+curl -s "https://restapi.amap.com/v3/place/text?key=<你的Web服务Key>&keywords=故宫&city=北京" | head -c 200
+```
+
+`"status":"1"` 才算通。返回 `USER_IP_IS_NOT_IN_WHITELIST` / `INVALID_USER_IP` 这类，
+就去控制台把**服务器的公网 IP** 加进去。
+
+> 本项目实测过：同一个 Key 从开发机可用，**不代表**从服务器可用。
+
+**Web 端（JS API）Key —— 域名白名单只认完整 Origin**
+
+格式必须是 `协议://域名:端口` 三者齐全，例如 `http://your-domain.com`
+或 `https://your-domain.com`。**用 IP 访问基本行不通**（社区反馈一致指出
+`127.0.0.1:8080` 这类写法不会被匹配）。
+
+所以：**如果你打算只用 IP 访问，结果页的地图大概率出不来**（其余功能都正常）。
+想让它出图，就得绑域名 —— 而大陆服务器用域名访问 80/443 需要备案（见 11.5）。
+
+> 好消息：前端的高德 Key 是**运行时注入**的（容器启动时生成 `/config.js`）。
+> 所以改 Key / 加白名单之后，只要 `docker compose restart frontend`，
+> **不需要重新构建镜像**。
+
+### 11.5 备案：大陆 ECS + 域名 = 必须备案
+
+- **只用 `IP:8080` 访问 → 不需要备案**，可以立刻用
+- **用域名访问 80/443 → 必须完成 ICP 备案**，否则会被拦截。
+  阿里云控制台有备案入口，通常 1~2 周（个人主体）
+- 想先跑起来看看效果，就用 IP:8080；域名和备案可以之后再加
+
+### 11.6 部署与验收（阿里云版）
+
+```bash
+# 1. 装 Docker(11.3),拉代码
+git clone https://github.com/<你的仓库>.git /opt/tripmind && cd /opt/tripmind
+
+# 2. 配置
+cp .env.example .env && vi .env
+#    必填:LLM_API_KEY / AMAP_API_KEY / VITE_AMAP_WEB_JS_KEY
+#    改成服务器上的实际访问地址,否则外部访问会被 CORS 拦:
+#      CORS_ORIGINS=http://<服务器公网IP>:8080
+#      HTTP_PORT=8080
+
+# 3. 启动
+docker compose up -d --build
+docker compose logs -f backend
+```
+
+验收（**从你自己的电脑**访问，不是在服务器上）：
+
+| # | 检查 | 期望 |
+|---|---|---|
+| 1 | `http://<公网IP>:8080` | 首页正常渲染 |
+| 2 | 浏览器 Network 里 `/api/trip/health` | 200，且 **`mcp_tools_count` = 16** |
+| 3 | 提交一份 3 天行程 | 返回真实景点名与坐标 |
+| 4 | 结果页地图 | 出图（**出不来先看 11.4 的域名白名单**，不是代码问题） |
+| 5 | 知识库页 | 显示不可用是**正常**的 —— compose 里没带 Milvus（见 3.5 / 附录说明） |
+
+第 2 项是**最该看的一项**：高德 MCP 静默失效时，服务一切正常但输出全是编造的景点。
+
+---
+
 ## 附录：Docker 部署
 
 仓库里已经带了完整的 Docker 支持：`backend/Dockerfile`、`frontend/Dockerfile`、
