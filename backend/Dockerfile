@@ -31,11 +31,22 @@ ARG PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
 
 WORKDIR /app
 
-# ca-certificates:uvx 走 HTTPS 拉包要用
-# curl:下面 HEALTHCHECK 用(不装的话健康检查直接失败)
-RUN apt-get update \
- && apt-get install -y --no-install-recommends ca-certificates curl \
- && rm -rf /var/lib/apt/lists/*
+# ⚠️ 这里**刻意没有 apt-get**。原来装的是 ca-certificates + curl:
+#    前者给 uvx 走 HTTPS 拉包用,后者给 HEALTHCHECK 用。
+#
+#    但在阿里云 ECS 上实测:这层会**卡死**。python:3.12-slim 用的
+#    Debian 官方源 deb.debian.org 在国内经常"能连上但下不动",
+#    而 apt-get 默认**没有超时** —— 一挂就是好几分钟,日志里
+#    停在 `Get:4 ... [9678 kB]` 再也不动,看起来像构建卡了。
+#
+#    两件事其实都不需要它:
+#      - python:slim 基础镜像**自带** /etc/ssl/certs/ca-certificates.crt(实测有)
+#      - 健康检查改用 python 自己发请求,不必装 curl
+#
+#    少一层、少一个国外依赖 ⇒ 构建更稳也更快。
+#
+#    如果将来换了基础镜像导致证书缺失,症状是 uvx 拉包报 SSL 错误 ——
+#    那时再加回 apt,并把 Debian 源换成国内镜像(而不是用默认的)。
 
 # 先只拷依赖清单再装 —— 这样改业务代码不会让依赖层失效,
 # 二次构建能直接命中缓存。
@@ -61,8 +72,11 @@ USER appuser
 EXPOSE 8001
 
 # start-period 给足:首次启动要初始化高德 MCP 工具发现(uvx 还要下载包)
+#
+# 用 python 发请求而不是 curl:上面刻意不装 apt,而 python 本来就在镜像里。
+# urlopen 遇到非 2xx 会抛异常 → 退出码非 0 → 健康检查失败。
 HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
-    CMD curl -fsS http://127.0.0.1:8001/health || exit 1
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/health', timeout=4)"
 
 # ⚠️ --workers 必须是 1。
 #   app/api/routes/knowledge.py 的 _TASKS 与 app/config.py 的
