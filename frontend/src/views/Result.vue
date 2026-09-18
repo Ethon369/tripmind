@@ -230,6 +230,7 @@ import { usePlanExport } from '@/composables/usePlanExport';
 import { useScreen } from '@/composables/useScreen';
 import { useUnsavedGuard } from '@/composables/useUnsavedGuard';
 import { getPlan, updatePlan } from '@/services/api';
+import { amapJsKey, amapSecurityCode } from '@/config/runtime';
 import type {
   Attraction,
   KnowledgeSource,
@@ -647,7 +648,10 @@ async function initMap() {
 
   // 高德 2021-12 之后申请的 key 需要配套的安全密钥，否则会报 INVALID_USER_SCODE。
   // 必须在 AMapLoader.load() **之前**设置才生效；没配就不设（老 key 不需要）。
-  const securityCode = import.meta.env.VITE_AMAP_SECURITY_CODE;
+  //
+  // 两个值都走 src/config/runtime.ts：运行时注入优先，构建期变量兜底。
+  // 这样 Docker 部署换 Key 只要改环境变量重启容器，不用重新构建镜像。
+  const securityCode = amapSecurityCode();
   if (securityCode) {
     (
       window as unknown as { _AMapSecurityConfig?: { securityJsCode: string } }
@@ -656,7 +660,7 @@ async function initMap() {
 
   try {
     const AMap = await AMapLoader.load({
-      key: import.meta.env.VITE_AMAP_WEB_JS_KEY,
+      key: amapJsKey(),
       version: '2.0',
       plugins: ['AMap.Marker', 'AMap.Polyline', 'AMap.InfoWindow'],
     });

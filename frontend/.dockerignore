@@ -1,0 +1,25 @@
+# 构建上下文 = frontend/。node_modules 有 20000+ 文件,
+# 不挡掉的话光是传给 docker daemon 就要很久。
+
+node_modules/
+dist/
+dist-ssr/
+.vite/
+
+# 密钥 / 本地配置。注意 VITE_* 是构建期变量,但 Docker 构建时
+# 我们**不需要**它 —— 前端配置改成运行时注入了(见 frontend/src/config/runtime.ts)
+.env
+.env.*
+!.env.example
+
+# 编辑器 / 系统
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# 日志
+*.log
+npm-debug.log*
+yarn-error.log*

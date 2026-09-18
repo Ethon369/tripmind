@@ -1,0 +1,96 @@
+# 途灵 TripMind —— Docker Compose 一键启动
+#
+#   cp .env.example .env      # 填 3~5 个 Key
+#   docker compose up -d --build
+#   打开 http://127.0.0.1:8080
+#
+# 两个服务:backend(FastAPI,内含 uvx 起高德 MCP)+ frontend(nginx 托管 SPA 并反代 /api)。
+# 数据存在命名卷 tripmind-data 里,`docker compose down` 不会丢;`down -v` 才会删。
+
+name: tripmind
+
+services:
+  # =========================================================================
+  # 后端
+  # =========================================================================
+  backend:
+    build:
+      context: ./backend
+      args:
+        # 国内默认走清华源;国外可换成 https://pypi.org/simple
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.tuna.tsinghua.edu.cn/simple}
+    image: tripmind-backend:local
+
+    # ⚠️ 整个 .env 都传给后端(多传几个前端用的 VITE_* 没关系,
+    #    后端配置是 extra="ignore",未知变量会被忽略)。
+    env_file:
+      - ./.env
+
+    environment:
+      # 覆盖 .env 里的 `./data/...` —— 让可变数据落在数据卷上,
+      # 而不是随着容器一起被删掉。
+      # 注意 TRIPMIND_DB 这个名字:字段其实叫 db_path,是靠 config.py 里的
+      # AliasChoices 才认的(在此之前它是个静默失效的配置项)。
+      TRIPMIND_DB: /data/tripmind.db
+      RUNS_DIR: /data/runs
+      HOST: 0.0.0.0
+      PORT: "8001"
+
+    volumes:
+      # 只有这一处需要持久化。data/frozen 与 data/knowledge_base 是**只读输入**,
+      # 已经打进镜像了,所以卷只挂 /data,不会把它们挡住。
+      - tripmind-data:/data
+
+    ports:
+      # 只绑到宿主机回环:对外统一走前端的 nginx(同源,也不暴露 /docs)。
+      # 想直接调接口/看文档时用 http://127.0.0.1:8001/docs。
+      - "127.0.0.1:${BACKEND_PORT:-8001}:8001"
+
+    restart: unless-stopped
+
+  # =========================================================================
+  # 前端(nginx + 静态产物)
+  # =========================================================================
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        # 国内默认走 npmmirror;国外可换成 https://registry.npmjs.org
+        NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmmirror.com}
+    image: tripmind-frontend:local
+
+    environment:
+      # 这两项由容器启动脚本写进 /config.js(运行时注入),
+      # 所以**改完只要重启容器**,不需要重新构建镜像。
+      # 取值来自下面的 .env(compose 会自动读它做变量替换)或当前 shell 环境。
+      #
+      # ⚠️ 只放本来就公开的前端配置:高德 JS API Key 靠控制台的域名白名单保护。
+      #    后端的高德 Web 服务 Key 和 LLM Key 绝不能放这里。
+      VITE_AMAP_WEB_JS_KEY: ${VITE_AMAP_WEB_JS_KEY:-}
+      VITE_AMAP_SECURITY_CODE: ${VITE_AMAP_SECURITY_CODE:-}
+
+    ports:
+      - "${HTTP_PORT:-8080}:80"
+
+    depends_on:
+      backend:
+        # 等后端健康再起前端:否则第一次打开页面时 /api 会有一小段 502
+        condition: service_healthy
+
+    restart: unless-stopped
+
+# ===========================================================================
+# 知识库(RAG)默认**没有**纳入这个 compose —— 见 docs/DEPLOYMENT.md
+# ===========================================================================
+# Milvus standalone 自己就是三个容器(etcd + minio + milvus),塞进来会让
+# `docker compose up` 变成"起 5 个容器、占掉 2~4 GB 内存",而 RAG 是可选的
+# —— 首次体验不该被它拖累。
+#
+# 想用的话:单独把 Milvus 跑起来,然后在 .env 里设
+#   ENABLE_RAG=true
+#   MILVUS_URI=http://host.docker.internal:19530
+# 注意是 host.docker.internal 而不是 localhost —— 后端在容器里,
+# 容器内的 localhost 是它自己,不是宿主机。
+
+volumes:
+  tripmind-data:

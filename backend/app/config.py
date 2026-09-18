@@ -3,6 +3,7 @@
 import os
 from pathlib import Path
 from typing import List
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings
 from dotenv import load_dotenv
 
@@ -84,7 +85,22 @@ class Settings(BaseSettings):
     embed_dim_expected: int = 1024
 
     # ---------- 本地存储 ----------
-    db_path: str = "./data/tripmind.db"
+    #
+    # ⚠️ `TRIPMIND_DB` 这个名字**曾经是一个静默失效的配置项**。
+    #
+    # pydantic-settings 默认按**字段名**匹配环境变量,而这个字段叫 `db_path` ——
+    # 所以 `.env` 里写 `TRIPMIND_DB=...` 会被当成未知变量。更糟的是
+    # `extra = "ignore"` 让它**不报任何错**:用户以为改了数据库位置,
+    # 实际一直用的是默认的 `./data/tripmind.db`。
+    #
+    # 是给 Docker 配数据卷时发现的:卷挂在别处、库却still 写在容器里,
+    # 一重建容器数据就没了 —— 而日志里一句提示都没有。
+    #
+    # 现在两种写法都认(AliasChoices 会依次尝试),旧的部署脚本不用改。
+    db_path: str = Field(
+        default="./data/tripmind.db",
+        validation_alias=AliasChoices("TRIPMIND_DB", "DB_PATH", "db_path"),
+    )
     runs_dir: str = "./data/runs"
     frozen_dir: str = "./data/frozen"
 

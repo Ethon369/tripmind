@@ -1,0 +1,40 @@
+# 构建上下文 = backend/。把不该进镜像的东西挡掉,
+# 否则镜像会被 venv 撑到几百 MB,而且里面是**宿主平台的可执行文件**,
+# 进容器后完全没用(Windows 的 uvx.exe 在 Linux 容器里跑不了)。
+
+# 虚拟环境 —— 由镜像内 pip install 重建
+venv/
+.venv/
+env/
+
+# Python 缓存与测试产物
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# 密钥:绝不能进镜像。容器里通过 env_file / environment 传
+.env
+.env.*
+!.env.example
+
+# 运行时才产生的数据 —— 由数据卷提供,不进镜像
+data/runs/
+data/*.db
+data/*.db-wal
+data/*.db-shm
+data/eval/
+# 注意:data/frozen/ 与 data/knowledge_base/ **要**进镜像 ——
+# 它们是只读输入(评测 ground truth 与内置攻略),运行时不需要改动。
+
+# 编辑器 / 系统
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# 日志
+*.log
