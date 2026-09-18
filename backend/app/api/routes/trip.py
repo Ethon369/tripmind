@@ -1,6 +1,7 @@
 """旅行规划API路由"""
 
 import json
+import logging
 import re
 import time
 from typing import List, Optional
@@ -16,12 +17,15 @@ from ...models.schemas import (
     PlanDetailResponse,
     PlanSummary,
 )
+from ..errors import handle_service_errors, to_http_error
 from ...agents.trip_planner_agent import get_trip_planner_agent
 from ...observability import collect_usage, make_observer
 from ...services.llm_service import get_llm
 from ...store import get_plan_store
 
 router = APIRouter(prefix="/trip", tags=["旅行规划"])
+
+logger = logging.getLogger(__name__)
 
 
 @router.post(
@@ -153,7 +157,11 @@ def plan_trip(request: TripRequest):
         )
 
     except Exception as e:
-        print(f"❌ 生成旅行计划失败: {str(e)}")
+        # ⚠️ 这个端点**不能**用 @handle_service_errors:它除了构造错误响应,
+        # 还要把库里那条 running 记录标成 error(否则它会永远挂在"生成中")。
+        # 所以自己 catch 做清理,只有「错误响应怎么构造」交给统一模块 ——
+        # 那是唯一会产生信息泄漏的一步(以前是 detail=f"...{str(e)}")。
+        print(f"❌ 生成旅行计划失败: {type(e).__name__}: {e}")
         import traceback
         traceback.print_exc()
         # 把库里那条 running 记录标成失败,免得它永远挂在"生成中"
@@ -166,10 +174,7 @@ def plan_trip(request: TripRequest):
                 )
         except Exception as save_err:
             print(f"⚠️ 标记失败状态时出错(不影响报错): {save_err}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"生成旅行计划失败: {str(e)}"
-        )
+        raise to_http_error("生成旅行计划", e) from e
 
 
 @router.get(
@@ -209,10 +214,17 @@ def health_check():
             "mcp_tools_count": len(getattr(agent.amap_tool, "_available_tools", None) or []),
         }
     except Exception as e:
+        # 503 而不是 500:这个语义是给监控/负载均衡看的("实例不可用"),
+        # 与普通业务异常不是一回事。所以这里不用 handle_service_errors。
+        #
+        # 仍然不回 `str(e)`:它可能是任何库的报错原文。完整堆栈进日志,
+        # 对外只给异常类型 —— 异常类型足以区分是配置缺失(ValueError)
+        # 还是框架内部问题(AttributeError 等)。
+        logger.exception("健康检查失败: %s", e)
         raise HTTPException(
             status_code=503,
-            detail=f"服务不可用: {str(e)}"
-        )
+            detail=f"服务不可用: {type(e).__name__}"
+        ) from e
 
 
 # ===========================================================================
@@ -406,6 +418,7 @@ def parse_intent(request: ParseIntentRequest):
     summary="历史行程列表",
     description="按创建时间倒序返回已生成的行程,附带累计用量统计"
 )
+@handle_service_errors("读取历史行程")
 def list_plans(limit: int = 50, offset: int = 0):
     """历史行程列表。
 
@@ -413,21 +426,17 @@ def list_plans(limit: int = 50, offset: int = 0):
         limit: 返回条数上限(1-200)
         offset: 偏移量,用于分页
     """
-    try:
-        store = get_plan_store()
-        limit = max(1, min(int(limit), 200))
-        offset = max(0, int(offset))
+    store = get_plan_store()
+    limit = max(1, min(int(limit), 200))
+    offset = max(0, int(offset))
 
-        rows = store.list_plans(limit=limit, offset=offset)
-        return PlanListResponse(
-            success=True,
-            message=f"共 {len(rows)} 条",
-            data=[PlanSummary(**r) for r in rows],
-            stats=store.stats(),
-        )
-    except Exception as e:
-        print(f"❌ 读取历史行程失败: {e}")
-        raise HTTPException(status_code=500, detail=f"读取历史行程失败: {e}")
+    rows = store.list_plans(limit=limit, offset=offset)
+    return PlanListResponse(
+        success=True,
+        message=f"共 {len(rows)} 条",
+        data=[PlanSummary(**r) for r in rows],
+        stats=store.stats(),
+    )
 
 
 @router.get(

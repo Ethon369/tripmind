@@ -162,12 +162,28 @@ class TripPlanResponse(BaseModel):
 
 
 class POIInfo(BaseModel):
-    """POI信息"""
+    """POI信息
+
+    ⚠️ 为什么 `location` 是可选的、`typecode` 和 `type` 是分开的两个字段:
+
+    高德的**关键词搜索**(`maps_text_search`)实测只返回
+    `{id, name, address, typecode}` —— **不含坐标**(1924 条真实样本无一例外)。
+    它给的是分类**码**(如 `"110201|140100"`),不是可读的类型名;
+    可读类型名和坐标都要再调一次 `maps_search_detail` 才拿得到。
+
+    所以这里如实把 `location` 设为可选:`None` 表示"搜索接口没给",
+    而不是补一个 `[0.0, 0.0]` —— 那会变成一个"在几内亚湾海上"的合法坐标,
+    比没有更糟。
+    """
+
     id: str = Field(..., description="POI ID")
     name: str = Field(..., description="名称")
-    type: str = Field(..., description="类型")
-    address: str = Field(..., description="地址")
-    location: Location = Field(..., description="经纬度坐标")
+    address: str = Field(default="", description="地址")
+    typecode: str = Field(default="", description="高德分类码,如 110201|140100")
+    type: str = Field(default="", description="可读类型名(仅详情接口提供)")
+    location: Optional[Location] = Field(
+        default=None, description="经纬度坐标;关键词搜索不返回,为 None"
+    )
     tel: Optional[str] = Field(default=None, description="电话")
 
 

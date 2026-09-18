@@ -1,5 +1,7 @@
 """途灵 TripMind - 后端应用"""
 
+import logging
+import os
 import sys
 
 __version__ = "1.0.0"
@@ -39,4 +41,35 @@ def _force_utf8_stdio() -> None:
             pass
 
 
+def _configure_logging() -> None:
+    """给根 logger 装一个默认 handler,让 `logging` 的输出真的看得见。
+
+    为什么需要
+    ----------
+    本项目绝大部分日志走 `print`(带 emoji,人手看很直观),只有错误边界
+    (`app/api/errors.py`)用 `logging.exception` 记完整堆栈 —— 那里必须用
+    logging,因为要拿 traceback。
+
+    但 Python 默认**不给根 logger 装 handler**。没有 handler 时,logging 会
+    退到 `logging.lastResort`(只输出消息、丢掉时间/级别/模块名,等级还卡在
+    WARNING),uvicorn 又只配置它自己那几个 logger、**不碰根 logger**。
+    结果就是错误编号散落在没法过滤的输出里。
+
+    用 `if not root.handlers` 守卫:如果调用方(某个脚本、pytest)已经配过
+    logging,就不要覆盖它的配置。
+
+    放在 `app/__init__.py` 的理由与 `_force_utf8_stdio` 相同:
+    任何入口 `import app` 就生效,不会漏。
+    """
+    root = logging.getLogger()
+    if root.handlers:
+        return
+    logging.basicConfig(
+        level=os.getenv("LOG_LEVEL", "INFO").upper(),
+        # 带上模块名:出问题时"哪个模块报的"比"几点报的"更关键
+        format="%(asctime)s %(levelname)-8s %(name)s: %(message)s",
+    )
+
+
 _force_utf8_stdio()
+_configure_logging()

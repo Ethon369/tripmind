@@ -47,6 +47,7 @@ from typing import Any, Iterable, Sequence
 import numpy as np
 
 from ..config import Settings, get_settings
+from .amap_parsing import normalize_str_list
 
 BACKEND_DIR = Path(__file__).resolve().parents[2]
 
@@ -169,18 +170,12 @@ def normalize_aliases(raw: object) -> list[str]:
     能不能搜到故宫」这条端到端验证才暴露出来的。
 
     多个别名在字符串里用 `|` 分隔(见 `中国历史博物馆|北京历史博物馆`)。
+
+    实现委托给 `amap_parsing.normalize_str_list` —— 同一个坑只需要一个实现。
+    灌库(knowledge_service)和 map/poi 路由(amap_service)读的是同一个
+    `alias` 字段,各写一份迟早会只修好一边。
     """
-    if raw is None:
-        return []
-    if isinstance(raw, str):
-        return [a.strip() for a in raw.split("|") if a.strip()]
-    if isinstance(raw, (list, tuple, set)):
-        out: list[str] = []
-        for item in raw:
-            # 列表里也可能装着 `|` 分隔的字符串,统一按同一个规则拆
-            out.extend(a.strip() for a in str(item).split("|") if a.strip())
-        return out
-    return []
+    return normalize_str_list(raw)
 
 
 def poi_to_text(poi: dict) -> str:
