@@ -72,7 +72,7 @@
 |---|---|---|
 | 高德 **Web 服务** Key | 后端调用 MCP 工具 | 高德控制台 |
 | 高德 **Web 端（JS API）** Key + 安全密钥 | 前端加载地图 | 高德控制台 |
-| LLM API Key | 生成行程 | DeepSeek / OpenAI 等 |
+| LLM API Key | 生成行程 | 阿里云百炼控制台（或其他 OpenAI 兼容服务） |
 
 ---
 
@@ -155,8 +155,9 @@ PORT=8001
 
 # 密钥
 LLM_API_KEY=<你的真实 Key>
-LLM_BASE_URL=https://api.deepseek.com
-LLM_MODEL_ID=<你的模型名>
+# 阿里云百炼的 OpenAI 兼容入口,注意**要带** /compatible-mode/v1
+LLM_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
+LLM_MODEL_ID=qwen3.7-plus
 AMAP_API_KEY=<高德 Web 服务 Key>
 
 # ⚠️ 必改：换成你的域名，否则浏览器请求会被 CORS 拦掉
@@ -558,96 +559,103 @@ sudo tail -f /var/log/nginx/error.log
 
 ---
 
-## 附录：如果希望改用 Docker
+## 附录：Docker 部署
 
-**当前仓库不包含任何 Docker 配置**（无 `Dockerfile`、`docker-compose.yml`、`.dockerignore`），启动方式是上文的本机 venv + systemd。若希望容器化，可按下面的配置自行添加。
+仓库里已经带了完整的 Docker 支持：`backend/Dockerfile`、`frontend/Dockerfile`、
+`frontend/nginx.conf`、`docker-compose.yml`，以及两边的 `.dockerignore`。
+日常用 **`README.md` 的「用 Docker 启动」**就够了，这里只补充服务器上要注意的部分。
 
-`backend/Dockerfile`：
+### 与裸机部署的差异
 
-```dockerfile
-FROM python:3.12-slim
+| 项 | 裸机（上文） | Docker |
+|---|---|---|
+| 对外端口 | Nginx 监听 80/443 | 前端容器监听 `HTTP_PORT`（默认 8080），宿主机的 Nginx 再反代到它 |
+| 后端端口 | systemd 起 uvicorn | 容器内 uvicorn，**只绑宿主机回环**用于调试 |
+| 配置来源 | `backend/.env` | 仓库根目录 `.env`（`env_file` + 构建期变量替换） |
+| 数据位置 | `backend/data/` | 命名卷 `tripmind-data`（挂在 `/data`） |
+| 前端 Key | 构建期 `VITE_*` | **运行时注入**，改完重启容器即可 |
 
-# uvx 需要 curl 下载 amap-mcp-server；ca-certificates 用于 HTTPS
-RUN apt-get update && apt-get install -y --no-install-recommends \
-        curl ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
+### 服务器上的步骤
 
-WORKDIR /app
+1. **装 Docker**（如果还没有）
 
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt \
-        -i https://pypi.tuna.tsinghua.edu.cn/simple
+   ```bash
+   curl -fsSL https://get.docker.com | sudo sh
+   sudo usermod -aG docker $USER && newgrp docker
+   ```
 
-COPY . .
+2. **上传代码并配置**
 
-# SQLite 与运行时产物的落盘位置，需挂载为卷
-VOLUME ["/app/data"]
+   ```bash
+   git clone <仓库地址> /opt/tripmind && cd /opt/tripmind
+   cp .env.example .env
+   vi .env
+   ```
 
-EXPOSE 8001
+   服务器上要额外改这两项（否则外部访问不到、或跨域被拦）：
 
-# workers 必须为 1：项目依赖进程内状态（见部署指南 3.5 节）
-CMD ["uvicorn", "app.api.main:app", "--host", "0.0.0.0", "--port", "8001", "--workers", "1"]
-```
+   ```ini
+   HTTP_PORT=8080
+   CORS_ORIGINS=https://your-domain.com
+   ```
 
-`frontend/Dockerfile`：
+3. **启动**
 
-```dockerfile
-# 构建阶段
-FROM node:20-alpine AS build
-WORKDIR /app
-COPY package*.json ./
-RUN npm ci --registry=https://registry.npmmirror.com
-COPY . .
-# VITE_* 变量在此阶段注入，改完必须重新构建
-RUN npm run build
+   ```bash
+   docker compose up -d --build
+   docker compose logs -f backend
+   ```
 
-# 运行阶段
-FROM nginx:alpine
-COPY --from=build /app/dist /usr/share/nginx/html
-```
+4. **宿主机的 Nginx 反代到前端容器**（HTTPS、域名、SPA 回退都在这一层）
 
-`docker-compose.yml`（项目根目录）：
+   ```nginx
+   server {
+       listen 80;
+       server_name your-domain.com;
+       client_max_body_size 10m;
 
-```yaml
-services:
-  backend:
-    build: ./backend
-    env_file: ./backend/.env
-    volumes:
-      - ./backend/data:/app/data
-    # 只在本机暴露，由 nginx 反代
-    ports:
-      - "127.0.0.1:8001:8001"
-    restart: unless-stopped
+       location / {
+           proxy_pass http://127.0.0.1:8080;
+           proxy_set_header Host $host;
+           proxy_set_header X-Real-IP $remote_addr;
+           proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+           proxy_set_header X-Forwarded-Proto $scheme;
+           # 生成行程要 1~2 分钟,这里也要给足,否则外层先 504
+           proxy_read_timeout 300s;
+       }
+   }
+   ```
 
-  frontend:
-    build: ./frontend
-    ports:
-      - "80:80"
-    depends_on:
-      - backend
-    restart: unless-stopped
-```
+   HTTPS 与高德域名白名单同前文第 6 节。
 
-`.dockerignore`（放在 `backend/` 与 `frontend/` 下）：
+### 容器化的三个坑（都已在本仓库的配置里处理）
 
-```
-venv/
-node_modules/
-dist/
-__pycache__/
-*.pyc
-.pytest_cache/
-data/runs/
-data/*.db
-.env
-```
+1. **非 root 用户 + 命名卷的属主。** 命名卷第一次创建时，Docker 会把镜像里该路径的
+   **属主**复制进卷。所以 `backend/Dockerfile` 里先 `mkdir /data` 并 `chown` 给非 root 用户
+   —— 否则卷归 root，SQLite 报 `unable to open database file`，很容易误判成路径写错。
+   **绑定挂载不走这套逻辑**，需要宿主机自己 `chown`。
+2. **`uvx` 必须能用。** Agent 靠 `uvx amap-mcp-server` 起高德 MCP；`uv` 是 pip 依赖，
+   会装到与解释器同一个 bin 目录，而 `mcp_launcher` 正是用 `sys.executable` 的目录去找它，
+   所以容器里这条路径天然成立。但 **`uvx` 第一次运行要联网下载包**，
+   缓存目录（`UV_CACHE_DIR`）必须对非 root 用户可写 —— 已在 Dockerfile 里设成 `/app/.uv-cache`。
+3. **`--workers` 必须是 1。** 见 3.5 节：灌库任务状态与 RAG 开关都是**进程内**的。
 
-启动：
+### 更新代码
 
 ```bash
-docker compose up -d --build
-docker compose logs -f backend
+cd /opt/tripmind
+git pull
+docker compose up -d --build        # 只重建有变化的那层
+docker compose restart              # 只改了 .env 时用这个,不用重建
 ```
 
-> ⚠️ 容器化版本的 Nginx 与上面的裸机配置不同（前者由 `frontend` 镜像内的 Nginx 承担），因此 `proxy_read_timeout`、SPA 回退、`/api` 反代这些规则**需要单独写在 `frontend/nginx.conf` 里**并 COPY 进镜像，否则长耗时请求仍会 504、前端路由仍会 404。裸机方案（第 5 节）已包含完整配置，部署起来更直接。
+### 数据备份
+
+数据在命名卷里，最直接的备份方式是从容器里把库导出来：
+
+```bash
+docker compose exec backend sh -c 'cat /data/tripmind.db' > /backup/tripmind-$(date +%F).db
+```
+
+需要连`冻结数据`一起备份时，它们本来就在镜像里（`backend/data/frozen`），
+随代码走，不必单独备份。

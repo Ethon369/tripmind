@@ -10,7 +10,7 @@
 - **高德地图集成**：通过 MCP 协议接入高德地图服务，实时获取 POI、天气与路线，而不是让模型凭记忆编造景点
 - **完整行程输出**：每日景点时间线、交通方式与耗时、天气、餐饮与住宿推荐、预算拆分
 - **结果持久化**：行程落库，支持刷新回看、历史列表与只读分享链接
-- **知识库（可选）**：上传攻略文档入库，生成时检索门票、预约、闭馆日、淡旺季等容易过时的信息拼进提示词；不开启也不影响主流程
+- **知识库（可选）**：上传攻略入库——支持 Markdown / 纯文本 / PDF（需有文字层）/ **图片截图**（由视觉模型识别成文字），生成时检索门票、预约、闭馆日、淡旺季等容易过时的信息拼进提示词；不开启也不影响主流程
 
 ## 技术栈
 
@@ -21,7 +21,7 @@
 | Web 框架 | FastAPI + Uvicorn |
 | Agent 编排 | HelloAgents（`SimpleAgent` / `MCPTool` / Embedding） |
 | 地图工具 | 高德地图 MCP Server（`amap-mcp-server`，经 `uvx` 启动） |
-| LLM | OpenAI 兼容接口（DeepSeek / OpenAI 等可换） |
+| LLM | 阿里云百炼 `qwen3.7-plus`；走 OpenAI 兼容接口，可换其他厂商 |
 | 向量库 | Milvus（仅知识库使用） |
 | Embedding | 硅基流动 `BAAI/bge-m3`（1024 维，REST） |
 | 存储 | stdlib `sqlite3`（plans / runs / llm_calls 三张表） |
@@ -37,30 +37,77 @@ helloagents-trip-planner/
 ├── backend/
 │   ├── app/
 │   │   ├── agents/            # 4 个 Agent 的编排与降级策略
-│   │   ├── api/               # FastAPI 入口与路由（trip / map / poi / knowledge）
+│   │   ├── api/               # FastAPI 入口、路由与统一错误边界
 │   │   ├── eval/              # 行程质量评测（自洽性、接地性、成本）
 │   │   ├── models/            # Pydantic 数据契约
 │   │   ├── observability/     # 结构化日志、token 计量、峰谷定价
-│   │   ├── services/          # 高德解析、MCP 启动、知识库检索、文档解析
+│   │   ├── services/          # 高德解析、MCP 启动、知识库检索、文档解析、LLM
 │   │   ├── store/             # SQLite 手写 SQL（plan / doc）
 │   │   └── config.py          # 配置与校验
 │   ├── scripts/               # 环境自检、灌库、录制、评测等运维脚本
 │   ├── tests/                 # pytest（纯函数单测）
 │   ├── data/                  # 冻结数据、知识库、SQLite（本地产物）
 │   ├── requirements.txt
-│   └── run.py                 # 启动入口
+│   ├── Dockerfile
+│   └── run.py                 # 本地开发启动入口
 ├── frontend/
 │   ├── src/
 │   │   ├── views/             # Home / Create / Result / History / Knowledge
 │   │   ├── components/        # 业务组件
 │   │   ├── composables/       # 组合式逻辑
+│   │   ├── config/runtime.ts  # 运行时配置（Docker 下由 /config.js 注入）
 │   │   ├── services/api.ts    # API 客户端
 │   │   └── styles/            # 设计令牌与样式
-│   └── vite.config.ts         # 含后端代理配置
-└── docs/                      # 设计与实现文档
+│   ├── Dockerfile
+│   ├── nginx.conf             # 容器内站点配置（SPA 回退 + /api 反代）
+│   └── vite.config.ts         # 开发时的后端代理配置
+├── docker-compose.yml         # 一键启动 backend + frontend
+├── .env.example               # Docker 部署用的配置模板
+└── docs/                      # 设计与部署文档
 ```
 
-## 快速开始
+## 用 Docker 启动（最省事）
+
+机器上有 Docker 就行，**不需要装 Python / Node**：
+
+```bash
+cp .env.example .env        # 填 3 个 Key（见下表）
+docker compose up -d --build
+```
+
+然后打开 **http://127.0.0.1:8080**。
+
+`.env` 里必须填的三项：
+
+| 变量 | 用途 | 从哪来 |
+|---|---|---|
+| `LLM_API_KEY` | 生成行程 | 阿里云百炼控制台（默认模型 `qwen3.7-plus`） |
+| `AMAP_API_KEY` | 后端调高德 MCP 工具 | 高德控制台 → **Web 服务** Key |
+| `VITE_AMAP_WEB_JS_KEY` | 前端加载地图 | 高德控制台 → **Web 端（JS API）** Key |
+
+> 两个高德 Key **不一样**，要分别申请。JS API Key 留空的话其余功能都正常，只是结果页的地图出不来。
+
+常用命令：
+
+```bash
+docker compose logs -f backend      # 看后端日志
+docker compose restart              # 改了 .env 之后重启（不需要重新 build）
+docker compose down                 # 停掉（数据在命名卷里，不会丢）
+docker compose down -v              # 连同数据一起删
+```
+
+几个需要知道的设计取舍：
+
+- **改高德 Key 不需要重新构建镜像。** `VITE_*` 变量本来会被编译进产物，所以常规做法下换个 Key 就得重跑几分钟的构建。这里改成了**运行时注入**：容器启动时按环境变量生成 `/config.js`，前端优先读它（见 `frontend/src/config/runtime.ts`）。改完 `.env` 只要 `docker compose restart frontend`。
+- **后端只绑在宿主机回环上**（`127.0.0.1:8001`），对外统一由前端的 nginx 反代 —— 同源省掉跨域，也不会把 `/docs` 直接暴露到公网。想本机调接口就用 `http://127.0.0.1:8001/docs`。
+- **知识库（RAG）默认没纳入 compose。** Milvus 自己就是 3 个容器，塞进来会让首次启动变成"起 5 个容器、占 2~4 GB 内存"，而 RAG 是可选的。需要用的话见 `docs/DEPLOYMENT.md`。
+- **数据存在命名卷 `tripmind-data`** 里（`down` 不丢，`down -v` 才删）。
+
+部署到公网服务器见 **`docs/DEPLOYMENT.md`**。
+
+---
+
+## 本地开发（不用 Docker）
 
 ### 环境要求
 
@@ -69,7 +116,7 @@ helloagents-trip-planner/
 - **两个高德 Key**（用途不同，需在高德控制台分别申请）：
   - **Web 服务** Key → 后端调用 MCP 使用
   - **Web 端（JS API）** Key → 前端加载地图使用
-- 一个 LLM API Key（DeepSeek / OpenAI 等）
+- 一个 LLM API Key（阿里云百炼，或其他 OpenAI 兼容服务）
 
 ### 后端
 
@@ -98,8 +145,8 @@ cp .env.example .env
 | 变量 | 说明 |
 |---|---|
 | `LLM_API_KEY` | 你的 LLM Key |
-| `LLM_BASE_URL` | 服务地址，例如 `https://api.deepseek.com`（DeepSeek **不带** `/v1`） |
-| `LLM_MODEL_ID` | 模型名，在服务商控制台查询 |
+| `LLM_BASE_URL` | 服务地址。默认配置指向**阿里云百炼**：`https://dashscope.aliyuncs.com/compatible-mode/v1`（**要带** `/compatible-mode/v1`）；换 DeepSeek 则是 `https://api.deepseek.com`（**不带** `/v1`） |
+| `LLM_MODEL_ID` | 模型名，在服务商控制台查询（默认 `qwen3.7-plus`） |
 | `AMAP_API_KEY` | 高德 **Web 服务** Key |
 
 `UNSPLASH_*`、`EMBED_*`、`MILVUS_*` 可留空（仅影响景点配图与知识库）。`.env` 已在 `.gitignore` 中，不会被提交。
