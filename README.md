@@ -1,128 +1,79 @@
-# 途灵 TripMind 🌍✈️
+# 途灵 TripMind
 
-输入目的地、日期和偏好,生成一份包含景点、天气、酒店、餐饮和预算的多日行程。
+输入目的地、日期与偏好，生成一份包含景点、天气、酒店、餐饮和预算的多日行程。
 
-## ✨ 功能特点
+后端 FastAPI + HelloAgents（含高德地图 MCP），前端 Vue 3 + TypeScript。
 
-- 🤖 **多 Agent 分工协作**: 景点搜索、天气查询、酒店推荐、行程整合由 4 个专职 Agent 分别完成
-- 🗺️ **高德地图集成**: 通过MCP协议接入高德地图服务,支持景点搜索、路线规划、天气查询
-- 🧠 **智能工具调用**: Agent自动调用高德地图MCP工具,获取实时POI、路线和天气信息
-- 🎨 **现代化前端**: Vue3 + TypeScript + Vite,响应式设计,流畅的用户体验
-- 📱 **完整功能**: 包含住宿、交通、餐饮和景点游览时间推荐
+## 功能
 
-## 🏗️ 技术栈
+- **多 Agent 分工**：景点搜索、天气查询、酒店推荐、行程整合由 4 个专职 Agent 按固定顺序依次执行，最后一步把前三步的自由文本收敛为强类型的行程结构
+- **高德地图集成**：通过 MCP 协议接入高德地图服务，实时获取 POI、天气与路线，而不是让模型凭记忆编造景点
+- **完整行程输出**：每日景点时间线、交通方式与耗时、天气、餐饮与住宿推荐、预算拆分
+- **结果持久化**：行程落库，支持刷新回看、历史列表与只读分享链接
+- **知识库（可选）**：上传攻略文档入库，生成时检索门票、预约、闭馆日、淡旺季等容易过时的信息拼进提示词；不开启也不影响主流程
 
-### 后端
-- **框架**: HelloAgents (基于SimpleAgent)
-- **API**: FastAPI
-- **MCP工具**: amap-mcp-server (高德地图)
-- **LLM**: 支持多种LLM提供商(OpenAI, DeepSeek等)
-- **向量库**: Milvus(可选,用于 RAG;检索层自行实现)
-- **Embedding**: 硅基流动 `BAAI/bge-m3`(1024 维,REST 接口)
-- **持久化**: stdlib `sqlite3`(不引 ORM)
+## 技术栈
 
-### 前端
-- **框架**: Vue 3 + TypeScript
-- **构建工具**: Vite
-- **UI组件库**: Ant Design Vue
-- **地图服务**: 高德地图 JavaScript API
-- **HTTP客户端**: Axios
+**后端**
 
-## 🧭 技术选型
+| 用途 | 选型 |
+|---|---|
+| Web 框架 | FastAPI + Uvicorn |
+| Agent 编排 | HelloAgents（`SimpleAgent` / `MCPTool` / Embedding） |
+| 地图工具 | 高德地图 MCP Server（`amap-mcp-server`，经 `uvx` 启动） |
+| LLM | OpenAI 兼容接口（DeepSeek / OpenAI 等可换） |
+| 向量库 | Milvus（仅知识库使用） |
+| Embedding | 硅基流动 `BAAI/bge-m3`（1024 维，REST） |
+| 存储 | stdlib `sqlite3`（plans / runs / llm_calls 三张表） |
 
-### 为什么选 HelloAgents
+**前端**
 
-Agent 编排层有三条常见路线:
+Vue 3 + TypeScript + Vite + Ant Design Vue + 高德地图 JS API + Axios
 
-| 方案 | 优点 | 未选原因 |
-|---|---|---|
-| 手写 ReAct 循环 | 完全可控、零额外依赖 | 需自行实现工具调用解析、多轮循环与上下文管理 |
-| LangChain / LangGraph | 生态成熟、组件丰富 | 抽象层较厚;本项目只需要 Agent 循环与 MCP 工具两块能力,引入成本大于收益 |
-| **HelloAgents** | 原生 MCP 支持、内置多种 Agent 范式 | — |
-
-选它主要省下两块工作:
-
-- **MCPTool** 可直接对接 `amap-mcp-server`,无需自己实现 MCP 协议层
-- **SimpleAgent** 内置工具调用循环(`max_tool_iterations`),无需自己实现多轮 function calling
-
-### 框架之外自己实现的部分
-
-HelloAgents 未内置多智能体编排能力——没有 `AgentTeam` / `Orchestrator` / 共享内存,Agent 之间也不能直接互相调用。因此以下部分由本项目自行实现:
-
-- **多 Agent 编排**: 4 个 Agent 的调度顺序、上下文传递,以及单个 Agent 失败时的降级策略(见 `agents/trip_planner_agent.py`)
-- **提示词工程**: 5 套系统提示词分别约束各 Agent 的工具使用方式与输出格式;其中行程规划 Agent 的提示词内嵌完整 JSON Schema,用于约束输出结构
-- **输出解析与容错**: `_parse_response()` 处理 LLM 返回中 JSON 代码块、裸 JSON、格式异常三种情况
-- **数据契约**: 用 Pydantic 模型(`TripPlan` / `DayPlan` / `Attraction` / `Budget` 等)定义 Agent 之间传递的结构,把 LLM 的自由文本输出收敛为强类型对象
-
-### 为什么 RAG 的检索层也是自己写的
-
-框架的 RAG(`memory/rag/pipeline.py`)只支持 Qdrant:`create_rag_pipeline()` 的签名里没有
-`store` 参数,内部无条件构造 `QdrantVectorStore`,也没有抽象基类或注册表可以挂新后端
-(在框架里 `grep -ril milvus` 返回空)。
-
-本项目用 **Milvus**,所以检索层写在 `backend/app/services/knowledge_service.py`。
-分成**两层**,各答一个不同的问题:
-
-| namespace | 数据源 | 回答什么 |
-|---|---|---|
-| `poi_facts` | 冻结的高德 POI 库存(1750 条,**带真实坐标**) | 这城市有哪些**真实**景点、在哪 |
-| `city_guides` | 手写 markdown 攻略(每城一篇) | 怎么安排才合理(门票、预约、淡旺季、避坑) |
-
-第二层才是「为什么需要 RAG」的正当答案 —— 这些是**模型容易记错或过时**的知识
-(门票涨价、闭馆日、预约规则)。第一层补的是另一个缺口:高德的
-`maps_text_search` **只返回名字和地址、不返回坐标**,模型手上没有坐标就容易编。
-
-检索结果**带出处**(`[1] 来源: 北京.md > 门票与预约`)拼进规划 Agent 的 prompt,
-而不是挂成一个工具 —— 这样检索时机确定、不占用模型的工具调用预算,而且
-query / 分数 / 来源都能记进运行日志,出问题时能分清是「检索坏了」还是「模型没用好」。
-
-`ENABLE_RAG` 关掉时,prompt 与加 RAG 之前**逐字相同**,所以开/关两组数字可以直接对比。
-
-## 📁 项目结构
+## 项目结构
 
 ```
-tripmind/
-├── backend/                    # 后端服务
+helloagents-trip-planner/
+├── backend/
 │   ├── app/
-│   │   ├── agents/            # Agent实现
-│   │   │   └── trip_planner_agent.py
-│   │   ├── api/               # FastAPI路由
-│   │   │   ├── main.py
-│   │   │   └── routes/
-│   │   │       ├── trip.py
-│   │   │       └── map.py
-│   │   ├── services/          # 服务层
-│   │   │   ├── amap_service.py
-│   │   │   └── llm_service.py
-│   │   ├── models/            # 数据模型
-│   │   │   └── schemas.py
-│   │   └── config.py          # 配置管理
+│   │   ├── agents/            # 4 个 Agent 的编排与降级策略
+│   │   ├── api/               # FastAPI 入口与路由（trip / map / poi / knowledge）
+│   │   ├── eval/              # 行程质量评测（自洽性、接地性、成本）
+│   │   ├── models/            # Pydantic 数据契约
+│   │   ├── observability/     # 结构化日志、token 计量、峰谷定价
+│   │   ├── services/          # 高德解析、MCP 启动、知识库检索、文档解析
+│   │   ├── store/             # SQLite 手写 SQL（plan / doc）
+│   │   └── config.py          # 配置与校验
+│   ├── scripts/               # 环境自检、灌库、录制、评测等运维脚本
+│   ├── tests/                 # pytest（纯函数单测）
+│   ├── data/                  # 冻结数据、知识库、SQLite（本地产物）
 │   ├── requirements.txt
-│   ├── requirements.lock.txt
-│   └── .gitignore
-├── frontend/                   # 前端应用
+│   └── run.py                 # 启动入口
+├── frontend/
 │   ├── src/
-│   │   ├── components/        # Vue组件
-│   │   ├── services/          # API服务
-│   │   ├── types/             # TypeScript类型
-│   │   └── views/             # 页面视图
-│   ├── package.json
-│   └── vite.config.ts
-└── README.md
+│   │   ├── views/             # Home / Create / Result / History / Knowledge
+│   │   ├── components/        # 业务组件
+│   │   ├── composables/       # 组合式逻辑
+│   │   ├── services/api.ts    # API 客户端
+│   │   └── styles/            # 设计令牌与样式
+│   └── vite.config.ts         # 含后端代理配置
+└── docs/                      # 设计与实现文档
 ```
 
-## 🚀 快速开始
+## 快速开始
 
-### 前提条件
+### 环境要求
 
 - Python 3.10+
-- Node.js 16+
-- 高德地图API密钥 (Web服务API和Web端(JS API))
-- LLM API密钥 (OpenAI/DeepSeek等)
+- Node.js 18+
+- **两个高德 Key**（用途不同，需在高德控制台分别申请）：
+  - **Web 服务** Key → 后端调用 MCP 使用
+  - **Web 端（JS API）** Key → 前端加载地图使用
+- 一个 LLM API Key（DeepSeek / OpenAI 等）
 
 ### 后端
 
-**1. 创建虚拟环境并装依赖**
+**1. 安装依赖**
 
 ```bash
 cd backend
@@ -134,28 +85,24 @@ python -m venv venv
 # ./venv/bin/python -m pip install -r requirements.txt
 ```
 
-> **不需要先 `activate`。** 下面所有命令都直接指向 venv 里的解释器,
-> 效果一样而且更不容易出错。后端启动高德 MCP 服务时也会自己找 venv 里的
-> `uvx`,不依赖 PATH —— 所以"忘了激活"不会再让工具静默失效。
+> 不需要先 `activate`。下面所有命令都直接指向 venv 里的解释器，效果一样且更不容易出错。
 
 **2. 配置环境变量**
 
 ```bash
 cp .env.example .env
-# 必填:
-#   LLM_API_KEY      你的 LLM key
-#   AMAP_API_KEY     高德 **Web服务** Key(后端调 MCP 用这个)
-#
-# 用 DeepSeek 的话这两个也要改(`.env.example` 里的默认值指向别的服务):
-#   LLM_BASE_URL=https://api.deepseek.com     ← 注意**不带** /v1
-#   LLM_MODEL_ID=<你的模型名>                  ← 在服务商控制台查,别照抄
-#
-# 可留空:
-#   UNSPLASH_ACCESS_KEY / UNSPLASH_SECRET_KEY   留空只是景点没配图
-#   EMBED_* / MILVUS_*                          只有开 RAG(ENABLE_RAG)才用得上
 ```
 
-> `.env` 已在 `.gitignore` 中,不会被提交。
+至少填写：
+
+| 变量 | 说明 |
+|---|---|
+| `LLM_API_KEY` | 你的 LLM Key |
+| `LLM_BASE_URL` | 服务地址，例如 `https://api.deepseek.com`（DeepSeek **不带** `/v1`） |
+| `LLM_MODEL_ID` | 模型名，在服务商控制台查询 |
+| `AMAP_API_KEY` | 高德 **Web 服务** Key |
+
+`UNSPLASH_*`、`EMBED_*`、`MILVUS_*` 可留空（仅影响景点配图与知识库）。`.env` 已在 `.gitignore` 中，不会被提交。
 
 **3. 启动**
 
@@ -166,205 +113,127 @@ cp .env.example .env
 # ./venv/bin/python run.py
 ```
 
-启动后:`http://127.0.0.1:8001/docs`
+启动后访问 API 文档：`http://127.0.0.1:8001/docs`
 
-**4. 确认真的起来了(别跳过这步)**
+**4. 确认服务真的可用**
 
 ```bash
 curl http://127.0.0.1:8001/api/trip/health
 ```
 
-返回里的 **`mcp_tools_count` 必须是 `16`**。
-
-> ⚠️ 这是这个项目最容易踩的坑:高德工具起不来时,**服务照常启动、接口照常返回
-> 200、不报任何错**,但 agent 会转去**编造**景点和坐标,而你看不出来。
-> 所以不要凭"返回 200"下结论 —— 要么看这个数字,要么看启动日志里
-> `✅ 工具 'amap' 已展开为 16 个独立工具`。
->
-> 数字不是 16 时,先确认 `AMAP_API_KEY` 填了、`./venv/Scripts/uvx.exe` 存在。
+返回里的 `mcp_tools_count` **应当是 16**。高德工具加载失败时服务仍会正常启动、接口仍返回 200，但 Agent 会转而编造景点与坐标，因此不要仅凭状态码判断。数字不对时，检查 `AMAP_API_KEY` 是否填写、`./venv/Scripts/uvx.exe` 是否存在（`uv` 是 `requirements.txt` 的依赖）。
 
 ### 前端
-
-**1. 装依赖**
 
 ```bash
 cd frontend
 npm install
-```
-
-**2. 配置环境变量**
-
-```bash
-cp .env.example .env
-# 编辑 .env,填入高德 **Web端(JS API)** Key
-```
-
-> 注意前端要的是 **Web端(JS API)** 的 Key,后端要的是 **Web服务** 的 Key ——
-> 两个不一样,在高德控制台要分别申请。
->
-> `VITE_` 前缀的变量会被打包进前端产物,请勿在此放入需要保密的密钥。
-
-**3. 启动**
-
-```bash
+cp .env.example .env      # 填入高德 Web 端（JS API）Key
 npm run dev
 ```
 
-Windows PowerShell 下要用 `npm.cmd`:
-```powershell
-npm.cmd run dev        # PowerShell 执行策略会挡 npm.ps1
-```
+打开 `http://127.0.0.1:5173`。
 
-**4. 打开浏览器访问 `http://127.0.0.1:5173`**
+Windows PowerShell 下请用 `npm.cmd run dev`（执行策略会拦截 `npm.ps1`）。
 
-> 用 `127.0.0.1` 而不是 `localhost`:Windows 上 `localhost` 会优先解析成 IPv6
-> (`::1`),可能连到一个**别的服务**上,表现成"后端好像没启动"。
+> 前端发送相对路径请求，由 `vite.config.ts` 的 `server.proxy` 转发到后端，因此后端换端口只需改这一处。
+> `VITE_` 前缀的变量会被打包进前端产物，请勿在此放入需要保密的密钥。
 
-前端发的是**相对路径**请求,由 vite proxy 转发到后端 —— 所以后端换端口
-只需要改 `frontend/vite.config.ts` 那一处。
-
-### RAG 知识库(可选,不装也能跑)
-
-默认 `ENABLE_RAG=false`,**不装 RAG 一切功能照常**。想用的话:
-
-**1. 起 Milvus**(需要 Docker Desktop 正在运行)
+### 运行测试
 
 ```bash
-cd D:/devlop/Milvus && docker compose up -d
-# healthz 返回 200 才算好,首次启动要等 30~60 秒
-curl http://127.0.0.1:9091/healthz
+cd backend
+./venv/Scripts/python.exe -m pip install -r requirements-dev.txt
+./venv/Scripts/python.exe -m pytest tests/ -q
 ```
 
-> ⚠️ Milvus standalone 是三个容器(etcd + minio + milvus)。
-> 如果容器被重建过、报 `InvalidateCollectionMetaCache failed ... node not match`,
-> 执行 `docker compose down && docker compose up -d` 即可(数据在 bind mount 里,不会丢)。
+## 使用说明
+
+1. 在**创建行程**页填写目的地城市、日期与天数、交通方式、住宿偏好和风格标签
+2. 点击「生成旅行计划」，系统依次执行：景点搜索 → 天气查询 → 酒店推荐 → 行程整合
+3. 生成完成后查看结果页：每日时间线、景点与地图标记、路线规划、天气、餐饮推荐与预算
+4. 历史页可回看已生成的行程；结果页可生成只读分享链接
+
+若模型或外部服务不可用，系统会返回一份**保留行程框架但清空内容**的结果并说明失败原因，而不是伪造景点。
+
+## 主要 API
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| POST | `/api/trip/plan` | 生成旅行计划 |
+| GET | `/api/trip/health` | 后端与 MCP 工具健康检查 |
+| POST | `/api/trip/parse` | 自然语言解析行程需求 |
+| GET | `/api/trip/plans` | 历史行程列表 |
+| GET | `/api/trip/plans/{id}` | 行程详情 |
+| PUT | `/api/trip/plans/{id}` | 保存编辑后的行程 |
+| DELETE | `/api/trip/plans/{id}` | 删除行程 |
+| GET | `/api/map/poi` | 搜索 POI（关键词搜索不返回坐标） |
+| GET | `/api/map/weather` | 查询天气 |
+| POST | `/api/map/route` | 规划路线（查不到时返回 `success=false`） |
+| GET | `/api/poi/detail/{poi_id}` | POI 详情（含坐标与开放时间） |
+| GET | `/api/poi/search` | 关键词搜索 POI |
+| GET | `/api/poi/photo` | 获取景点配图 |
+| — | `/api/knowledge/*` | 知识库状态、检索、文档上传与入库 |
+
+完整文档见 `http://127.0.0.1:8001/docs`。
+
+### 错误响应
+
+所有端点的错误响应格式一致：
+
+- **业务错误**（404 行程不存在、400 参数非法等）返回对应状态码与一句可照做的说明；
+- **未预期的服务端错误**返回 `500`，`detail` 是**规范化文案 + 一个错误编号**，
+  例如 `"搜索POI失败(错误编号 3f8a1c02),请稍后重试"`。完整堆栈只写进服务端日志，
+  不会随响应外泄（内部路径、依赖库报错原文都不出网）。把编号报过来即可在日志里定位。
+
+## 知识库（可选）
+
+默认关闭，不装也能跑完整流程。启用步骤：
+
+**1. 启动 Milvus**（需要 Docker）
+
+```bash
+docker compose -f /path/to/milvus/docker-compose.yml up -d
+curl http://127.0.0.1:9091/healthz     # 返回 200 才算就绪，首次启动约需 30~60 秒
+```
 
 **2. 环境自检**
 
 ```bash
 cd backend && ./venv/Scripts/python.exe scripts/check_rag_env.py
 ```
-六项全绿才继续。**尤其是维度必须是 1024** —— 维度不对不会报错,只会让检索静默返回空。
 
-**3. 灌知识**
+**3. 灌入内置知识**（会调用 embedding 接口，产生少量费用）
 
 ```bash
-cd backend && ./venv/Scripts/python.exe scripts/ingest_knowledge.py --dry-run   # 先看多少条,不花钱
+cd backend && ./venv/Scripts/python.exe scripts/ingest_knowledge.py --dry-run    # 先看条数，不花钱
 cd backend && ./venv/Scripts/python.exe scripts/ingest_knowledge.py --source=all
 ```
 
-⚠️ 灌库会调用 embedding 接口(**花你的额度**,1750+30 条约 ¥0.004)。
-重复执行是幂等的(用 POI id / 文件名+序号做主键,`upsert` 覆盖),改完攻略直接重跑。
+重复执行是幂等的（用 POI id / 文件名+序号做主键做 upsert），修改攻略后直接重跑即可。
 
-**4. 打开开关**
+**4. 开启开关**
 
-```bash
-# backend/.env
-ENABLE_RAG=true
-```
+在 `backend/.env` 中设置 `ENABLE_RAG=true`，或在**知识库页面**上传攻略后由系统临时开启（重启后恢复 `.env` 的值）。
 
-**5. 验证检索真的有效**
+## 说明与已知限制
 
-```bash
-cd backend && ./venv/Scripts/python.exe scripts/ingest_knowledge.py --source=guides --query "紫禁城" --query "兵马俑"
-```
+- **端口使用 8001 而非 8000**：8000 常被本机其他服务（尤其是 Docker 容器）同时占用 IPv6 的 `[::]:8000`，浏览器访问 `localhost:8000` 可能连到别的服务并返回空响应。项目统一使用 `127.0.0.1` 地址。
+- **高德 MCP 每次调用会新起一个 `uvx amap-mcp-server` 进程**，且其内部请求未设置超时；批量任务需自行加超时保护。
+- **知识库依赖 Docker 中的 Milvus standalone**（etcd + minio + milvus 三个容器）。Milvus 不可用时检索层会跳过，行程生成不会失败。
+- **不引入 torch / sentence-transformers**：目标环境为 Python 3.13+，无预编译 wheel，Embedding 统一走 REST 接口。
 
-「紫禁城」应该能搜到**故宫博物院**,「兵马俑」应该搜到**秦始皇帝陵博物院** ——
-这靠的是 POI 的别名,是高德数据里最容易被漏掉、又最影响检索效果的一块。
-
-> ⚠️ 每次要用 RAG 都得先确保 **Docker Desktop 开着 + Milvus 容器在跑**。
-> RAG 挂掉不会让行程生成失败(检索层会吞掉异常并跳过),只是少一段外部知识。
-
-## 📝 使用指南
-
-1. 在首页填写旅行信息:
-   - 目的地城市
-   - 旅行日期和天数
-   - 交通方式偏好
-   - 住宿偏好
-   - 旅行风格标签
-
-2. 点击"生成旅行计划"按钮
-
-3. 系统将:
-   - 由 4 个专职 Agent 分工生成初步计划
-   - Agent自动调用高德地图MCP工具搜索景点
-   - Agent获取天气信息和路线规划
-   - 整合所有信息生成完整行程
-
-4. 查看结果:
-   - 每日详细行程
-   - 景点信息与地图标记
-   - 交通路线规划
-   - 天气预报
-   - 餐饮推荐
-
-## 🔧 核心实现
-
-### HelloAgents Agent集成
-
-```python
-from hello_agents import SimpleAgent, HelloAgentsLLM
-from hello_agents.tools import MCPTool
-
-# 创建高德地图MCP工具
-amap_tool = MCPTool(
-    name="amap",
-    server_command=["uvx", "amap-mcp-server"],
-    env={"AMAP_MAPS_API_KEY": "your_api_key"},
-    auto_expand=True
-)
-
-# 创建旅行规划Agent
-agent = SimpleAgent(
-    name="旅行规划助手",
-    llm=HelloAgentsLLM(),
-    system_prompt="你是一个专业的旅行规划助手..."
-)
-
-# 添加工具
-agent.add_tool(amap_tool)
-```
-
-### MCP工具调用
-
-Agent可以自动调用以下高德地图MCP工具:
-- `maps_text_search`: 搜索景点POI
-- `maps_weather`: 查询天气
-- `maps_direction_walking_by_address`: 步行路线规划
-- `maps_direction_driving_by_address`: 驾车路线规划
-- `maps_direction_transit_integrated_by_address`: 公共交通路线规划
-
-## 📄 API文档
-
-启动后端服务后,访问 `http://127.0.0.1:8001/docs` 查看完整的API文档。
-
-> 端口用 8001 而不是默认的 8000:8000 上常有别的服务(Docker 容器会连 IPv6 的
-> `[::]:8000` 一起占用),那样浏览器访问 `localhost:8000` 会连到别人身上并返回空响应
-> (`ERR_EMPTY_RESPONSE`)。地址统一写 `127.0.0.1` 也省掉了 IPv6 解析这一层意外。
-
-主要端点:
-- `POST /api/trip/plan` - 生成旅行计划
-- `GET /api/map/poi` - 搜索POI
-- `GET /api/map/weather` - 查询天气
-- `POST /api/map/route` - 规划路线
-
-## 🤝 贡献指南
-
-欢迎提交Pull Request或Issue!
-
-## 📜 开源协议
+## 开源协议
 
 CC BY-NC-SA 4.0
 
-## 🙏 致谢
+## 致谢
 
-- [HelloAgents](https://github.com/datawhalechina/Hello-Agents) - 智能体教程
-- [HelloAgents框架](https://github.com/jjyaoao/HelloAgents) - 智能体框架
+- [HelloAgents](https://github.com/jjyaoao/HelloAgents) - Agent 框架
+- [Hello-Agents](https://github.com/datawhalechina/Hello-Agents) - 智能体教程
 - [高德地图开放平台](https://lbs.amap.com/) - 地图服务
-- [amap-mcp-server](https://github.com/sugarforever/amap-mcp-server) - 高德地图MCP服务器
+- [amap-mcp-server](https://github.com/sugarforever/amap-mcp-server) - 高德地图 MCP 服务器
 
 ---
 
-**途灵 TripMind** - 让旅行计划变得简单而智能 🌈
-
+**途灵 TripMind** - 让旅行计划变得简单而智能

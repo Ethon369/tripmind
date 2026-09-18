@@ -70,30 +70,128 @@ apiClient.interceptors.response.use(
 )
 
 /**
+ * 一个 axios 错误里我们真正会用到的字段。
+ *
+ * 为什么要有这个类型:axios 的 `catch` 拿到的在 TS 里是 `unknown` ——
+ * 不能直接点 `.response.data.detail`。以前每个方法都写 `catch (error: any)`,
+ * 等于把这一整片都退出类型检查,属性名写错、后端换了字段名都不会报错。
+ */
+interface ApiErrorShape {
+  /** HTTP 状态码。网络层就失败(断网、超时)时是 undefined */
+  status?: number
+  /** axios 自己的错误码,如 'ECONNABORTED'(超时)、'ERR_NETWORK' */
+  code?: string
+  /** 后端 FastAPI 返回的 `{"detail": "..."}` */
+  detail?: string
+  /** axios 生成的消息 */
+  message?: string
+}
+
+function readApiError(error: unknown): ApiErrorShape {
+  if (typeof error !== 'object' || error === null) {
+    return { message: typeof error === 'string' ? error : undefined }
+  }
+  // 收窄到我们关心的那几个字段。用 unknown 逐层判定,而不是 `as any` ——
+  // 这样 axios 将来改结构时,这里会先报类型错,而不是运行时静默变成 undefined。
+  const e = error as { code?: unknown; message?: unknown; response?: unknown }
+  const response = e.response as { status?: unknown; data?: unknown } | undefined
+  const data = response?.data as { detail?: unknown } | undefined
+
+  return {
+    status: typeof response?.status === 'number' ? response.status : undefined,
+    code: typeof e.code === 'string' ? e.code : undefined,
+    detail: typeof data?.detail === 'string' ? data.detail : undefined,
+    message: typeof e.message === 'string' ? e.message : undefined
+  }
+}
+
+/** 按状态码或 axios 错误码替换文案 */
+interface ApiErrorMessages {
+  /** HTTP 状态码 → 文案,如 `{ 404: '行程不存在或已被删除' }` */
+  byStatus?: Record<number, string>
+  /** axios 错误码 → 文案,如 `{ ECONNABORTED: '状态检查超时' }` */
+  byCode?: Record<string, string>
+}
+
+/**
+ * 把后端错误映射成一句能给用户看的话。
+ *
+ * 优先级:**错误码 → 后端 detail → 状态码 → axios 消息 → fallback**。
+ *
+ * 为什么 detail 排在状态码前面:后端的 detail 是 FastAPI 里写好的业务说明
+ * (如"这篇文档不存在（可能已被删除）。请重新上传。"),它比前端本地
+ * 硬编码的那句更具体。状态码映射只是"后端没给理由时"的兜底。
+ *
+ * 错误码(超时/断网)排最前是因为那时**后端根本没参与**,
+ * 也就没有 detail 可用。
+ *
+ * 这个函数替代了 17 处几乎一样的
+ * `throw toApiError(error, '…')`。
+ */
+function toApiError(
+  error: unknown,
+  fallback: string,
+  messages: ApiErrorMessages = {}
+): Error {
+  const { status, code, detail, message } = readApiError(error)
+
+  const byCode = code ? messages.byCode?.[code] : undefined
+  if (byCode) return new Error(byCode)
+
+  if (detail) return new Error(detail)
+
+  const byStatus = status !== undefined ? messages.byStatus?.[status] : undefined
+  if (byStatus) return new Error(byStatus)
+
+  return new Error(message || fallback)
+}
+
+/**
  * 生成旅行计划
  */
 export async function generateTripPlan(formData: TripFormData): Promise<TripPlanResponse> {
   try {
     const response = await apiClient.post<TripPlanResponse>('/api/trip/plan', formData)
     return response.data
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('生成旅行计划失败:', error)
-    throw new Error(error.response?.data?.detail || error.message || '生成旅行计划失败')
+    throw toApiError(error, '生成旅行计划失败')
   }
+}
+
+/** 后端 `/api/trip/health` 的返回(见 backend/app/api/routes/trip.py) */
+export interface TripHealthResponse {
+  status: string
+  service: string
+  /** 4 个 agent 的名字 */
+  agents: Record<string, string>
+  /** 每个 agent 注册了多少个工具 */
+  agent_tools: Record<string, number>
+  /**
+   * 高德 MCP 展开出的工具数量。
+   *
+   * ⚠️ 它应当是 **16**。高德工具加载失败时服务照常启动、接口照常 200,
+   * 但 agent 会转而编造景点与坐标 —— 从外部完全看不出来。
+   * 所以这是判断"服务真的健康"的唯一外部信号,比 status 字段更可信。
+   */
+  mcp_tools_count: number
 }
 
 /**
  * 健康检查
+ *
+ * 注意它返回的是 200 + `status='healthy'`,**不是**一个布尔值;
+ * 真正的健康信号是 `mcp_tools_count === 16`。
  */
-export async function healthCheck(): Promise<any> {
+export async function healthCheck(): Promise<TripHealthResponse> {
   try {
     // 之前这里写的是 '/health',但路由挂载在 /api/trip 下,
     // 真实路径是 /api/trip/health —— 所以这个函数一直是 404。
-    const response = await apiClient.get('/api/trip/health')
+    const response = await apiClient.get<TripHealthResponse>('/api/trip/health')
     return response.data
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('健康检查失败:', error)
-    throw new Error(error.message || '健康检查失败')
+    throw toApiError(error, '健康检查失败')
   }
 }
 
@@ -108,9 +206,9 @@ export async function listPlans(limit = 50, offset = 0): Promise<PlanListRespons
       params: { limit, offset }
     })
     return response.data
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('读取历史行程失败:', error)
-    throw new Error(error.response?.data?.detail || error.message || '读取历史行程失败')
+    throw toApiError(error, '读取历史行程失败')
   }
 }
 
@@ -126,13 +224,13 @@ export async function getPlan(planId: string): Promise<PlanDetailResponse> {
       `/api/trip/plans/${encodeURIComponent(planId)}`
     )
     return response.data
-  } catch (error: any) {
-    // 404 单独抛,前端据此显示"行程不存在"而不是"加载失败"
-    if (error.response?.status === 404) {
-      throw new Error(error.response?.data?.detail || '行程不存在或已被删除')
-    }
+  } catch (error: unknown) {
+    // 404 要单独给文案:前端据此显示"行程不存在"而不是笼统的"加载失败"。
+    // 后端对 404 的 detail 会优先于这里的兜底(见 toApiError 的优先级说明)。
     console.error('读取行程详情失败:', error)
-    throw new Error(error.response?.data?.detail || error.message || '读取行程详情失败')
+    throw toApiError(error, '读取行程详情失败', {
+      byStatus: { 404: '行程不存在或已被删除' }
+    })
   }
 }
 
@@ -146,9 +244,9 @@ export async function updatePlan(planId: string, plan: TripPlan): Promise<PlanDe
       plan
     )
     return response.data
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('保存行程失败:', error)
-    throw new Error(error.response?.data?.detail || error.message || '保存行程失败')
+    throw toApiError(error, '保存行程失败')
   }
 }
 
@@ -158,9 +256,9 @@ export async function updatePlan(planId: string, plan: TripPlan): Promise<PlanDe
 export async function deletePlan(planId: string): Promise<void> {
   try {
     await apiClient.delete(`/api/trip/plans/${encodeURIComponent(planId)}`)
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('删除行程失败:', error)
-    throw new Error(error.response?.data?.detail || error.message || '删除行程失败')
+    throw toApiError(error, '删除行程失败')
   }
 }
 
@@ -178,12 +276,13 @@ export async function getKnowledgeStatus(withCounts = true): Promise<KnowledgeSt
       timeout: 15000
     })
     return response.data
-  } catch (error: any) {
-    // 超时和「后端没起」要分开:前者是知识库慢,后者是服务不在
-    if (error.code === 'ECONNABORTED') {
-      throw new Error('状态检查超时。知识库可能正在启动,或 Milvus 连接卡住了。')
-    }
-    throw new Error(error.response?.data?.detail || error.message || '读取知识库状态失败')
+  } catch (error: unknown) {
+    // 超时和「后端没起」要分开:前者是知识库慢,后者是服务不在。
+    // 用 byCode 而不是 if 提前抛 —— 超时的时候后端根本没参与,
+    // 也就没有 detail 可用,只能靠 axios 的错误码区分。
+    throw toApiError(error, '读取知识库状态失败', {
+      byCode: { ECONNABORTED: '状态检查超时。知识库可能正在启动，或 Milvus 连接卡住了。' }
+    })
   }
 }
 
@@ -196,11 +295,10 @@ export async function searchKnowledge(
       timeout: 30000
     })
     return response.data
-  } catch (error: any) {
-    if (error.code === 'ECONNABORTED') {
-      throw new Error('检索超时。embedding 接口可能较慢或不可达。')
-    }
-    throw new Error(error.response?.data?.detail || error.message || '检索失败')
+  } catch (error: unknown) {
+    throw toApiError(error, '检索失败', {
+      byCode: { ECONNABORTED: '检索超时。embedding 接口可能较慢或不可达。' }
+    })
   }
 }
 
@@ -215,8 +313,8 @@ export async function previewKnowledgeIngest(
       { timeout: 20000 }
     )
     return response.data
-  } catch (error: any) {
-    throw new Error(error.response?.data?.detail || error.message || '读取灌库预览失败')
+  } catch (error: unknown) {
+    throw toApiError(error, '读取灌库预览失败')
   }
 }
 
@@ -237,9 +335,9 @@ export async function startKnowledgeIngest(
       { timeout: 20000 }
     )
     return response.data
-  } catch (error: any) {
+  } catch (error: unknown) {
     // 409 = 已有任务在跑。这句话直接给用户看,不用改写
-    throw new Error(error.response?.data?.detail || error.message || '提交灌库任务失败')
+    throw toApiError(error, '提交灌库任务失败')
   }
 }
 
@@ -251,11 +349,13 @@ export async function getKnowledgeIngestTask(taskId: string): Promise<KnowledgeI
       { timeout: 10000 }
     )
     return response.data
-  } catch (error: any) {
-    if (error.response?.status === 404) {
-      throw new Error('任务不存在(后端可能已重启)')
-    }
-    throw new Error(error.response?.data?.detail || error.message || '查询任务失败')
+  } catch (error: unknown) {
+    // 404 说明后端的任务表里没有这个 id —— 最常见的原因是后端重启过,
+    // 而任务状态是**进程内**的(见后端 knowledge.py 的 _TASKS)。
+    // 这句提示要留住,否则用户只看到"查询失败",会一直重试一个不存在的任务。
+    throw toApiError(error, '查询任务失败', {
+      byStatus: { 404: '任务不存在（后端可能已重启）' }
+    })
   }
 }
 
@@ -266,8 +366,8 @@ export async function getKnowledgeSources(): Promise<KnowledgeSources> {
       timeout: 20000
     })
     return response.data
-  } catch (error: any) {
-    throw new Error(error.response?.data?.detail || error.message || '读取数据源信息失败')
+  } catch (error: unknown) {
+    throw toApiError(error, '读取数据源信息失败')
   }
 }
 
@@ -295,12 +395,18 @@ export async function parseKnowledgeDoc(payload: {
     method: 'POST',
     body: form
   })
-  const data = await response.json().catch(() => null)
+  // fetch 不像 axios 那样在非 2xx 时抛异常,也不会替我们把 body 解析成 JSON,
+  // 所以这两件事都得手动做。`json()` 的返回类型是 `any`,这里显式收成
+  // `unknown`,再按需要收窄 —— 否则一个 `any` 会顺着 data 传下去。
+  const body: unknown = await response.json().catch(() => null)
   if (!response.ok) {
     // 后端对"文件不适合入库"这类问题统一回 422 + 一句能照做的话
-    throw new Error(data?.detail || `解析失败(HTTP ${response.status})`)
+    const detail = (body as { detail?: unknown } | null)?.detail
+    throw new Error(
+      typeof detail === 'string' ? detail : `解析失败(HTTP ${response.status})`
+    )
   }
-  return data as KnowledgeDocParse
+  return body as KnowledgeDocParse
 }
 
 /** 入库一篇已解析的攻略。202 + task_id,用 getKnowledgeIngestTask 轮询进度 */
@@ -312,8 +418,8 @@ export async function ingestKnowledgeDoc(docId: string): Promise<KnowledgeIngest
       { timeout: 30000 }
     )
     return response.data
-  } catch (error: any) {
-    throw new Error(error.response?.data?.detail || error.message || '提交入库任务失败')
+  } catch (error: unknown) {
+    throw toApiError(error, '提交入库任务失败')
   }
 }
 
@@ -324,8 +430,8 @@ export async function listKnowledgeDocs(): Promise<KnowledgeDocListResponse> {
       timeout: 20000
     })
     return response.data
-  } catch (error: any) {
-    throw new Error(error.response?.data?.detail || error.message || '读取攻略列表失败')
+  } catch (error: unknown) {
+    throw toApiError(error, '读取攻略列表失败')
   }
 }
 
@@ -337,11 +443,11 @@ export async function getKnowledgeDoc(docId: string): Promise<KnowledgeDocDetail
       { timeout: 20000 }
     )
     return response.data
-  } catch (error: any) {
-    if (error.response?.status === 404) {
-      throw new Error('这篇攻略不存在(可能已被删除)')
-    }
-    throw new Error(error.response?.data?.detail || error.message || '读取攻略详情失败')
+  } catch (error: unknown) {
+    // 404 给具体文案:文档被删掉是常见情况,提示要能指向"重新上传"
+    throw toApiError(error, '读取攻略详情失败', {
+      byStatus: { 404: '这篇攻略不存在（可能已被删除）' }
+    })
   }
 }
 
@@ -357,8 +463,8 @@ export async function deleteKnowledgeDoc(
       timeout: 60000
     })
     return response.data
-  } catch (error: any) {
-    throw new Error(error.response?.data?.detail || error.message || '删除失败')
+  } catch (error: unknown) {
+    throw toApiError(error, '删除失败')
   }
 }
 
@@ -371,8 +477,8 @@ export async function toggleKnowledgeRag(enabled: boolean): Promise<KnowledgeRag
       { timeout: 15000 }
     )
     return response.data
-  } catch (error: any) {
-    throw new Error(error.response?.data?.detail || error.message || '切换失败')
+  } catch (error: unknown) {
+    throw toApiError(error, '切换失败')
   }
 }
 
