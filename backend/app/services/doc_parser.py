@@ -7,15 +7,25 @@
 | `.md` / `.markdown` | 直接解码 | 质量最好 —— 标题层级天然适合切块,出处也能定位到小节 |
 | `.txt` / `.text` | 直接解码 | 先按标题切,没有标题就走长度兜底 |
 | `.pdf` | markitdown | **只支持有文字层的**,扫描件明确拒绝 |
+| `.png` / `.jpg` / `.jpeg` / `.webp` / `.bmp` / `.gif` | 视觉模型读图 | 攻略截图、门票说明、长图笔记 |
 
-## 刻意**不支持**图片
+## 图片:为什么现在做了(2026-09-18 新增)
 
-这不是没来得及做,是判断后不做:风景照里没有可检索的文字;攻略截图要先 OCR,
-要么引一套 OCR 服务、要么换成支持视觉的模型(本项目的 deepseek-flash 不支持图像)。
-花两三天接进去,检索质量还是不如用户直接把文字复制过来粘贴。
+原来这里是"刻意不做",两条理由:**图里没有可检索的文字** + **模型不支持图像**。
+换成 `qwen3.7-plus` 之后第二条不成立了,于是接进来。
 
-文档解析(OCR / 版面还原 / 表格抽取)属于**数据工程的深水区**,
-不是这个项目要展示的后端工程能力 —— 与「不自己实现 HNSW/BM25」是同一个取舍。
+但**第一条理由依然成立** —— 纯风景照确实没有可检索的文字。所以实现上
+用两件事把住它,而不是"既然能做就什么都往库里塞":
+
+1. **要求模型明确回答"没有文字"**(`NO_TEXT_MARKER`)。模型在图里没文字时
+   很爱描述画面或道歉(「这张图似乎是一张风景照…」)—— 那种句子**是文字**,
+   但零检索价值,入库只会稀释检索结果。所以用一个确定的标记来区分,
+   命中就明确拒绝,而不是"识别成功但存了一堆废话"。
+2. **入库内容带一条 warning**,界面上提示"内容由图片识别得到,数字请自行核对"。
+   识别误差集中在价格、时间、预约规则这些最要紧的字段上,必须让用户知道。
+
+⚠️ **扫描件 PDF 仍然不支持**(那需要先把 PDF 每页转成图,是另一件事),
+但报错信息会指向"截图后按图片上传"这条现在真的可行的路。
 
 ## 两个必须处理的坑
 
@@ -42,6 +52,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .knowledge_service import split_markdown_sections
+from .llm_service import looks_like_no_text
 
 # 扩展名 → 内部 origin 标识。用白名单而不是黑名单:
 # 用户可能传任何东西上来,黑名单永远漏。
@@ -51,6 +62,25 @@ SUPPORTED_EXTENSIONS: dict[str, str] = {
     ".txt": "txt",
     ".text": "txt",
     ".pdf": "pdf",
+    # 图片走视觉模型。这些是常见到"用户随手截图就是它"的格式;
+    # HEIC(iPhone 默认)没放进来 —— Pillow 不带这个解码器,
+    # 收了也只会在后面报一个看不懂的错,不如在这里明确拒绝。
+    ".png": "image",
+    ".jpg": "image",
+    ".jpeg": "image",
+    ".webp": "image",
+    ".bmp": "image",
+    ".gif": "image",
+}
+
+# 扩展名 → MIME。拼 base64 的 data URL 要用。
+IMAGE_MIME: dict[str, str] = {
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".webp": "image/webp",
+    ".bmp": "image/bmp",
+    ".gif": "image/gif",
 }
 
 MAX_TITLE_CHARS = 80
@@ -65,6 +95,22 @@ MAX_DOC_CHARS = 200_000
 
 CHUNK_TARGET_CHARS = 600
 CHUNK_MAX_CHARS = 1200
+
+# 图片最长边超过它就缩。1600 是权衡:
+# 攻略截图的文字在这个分辨率下依然清晰可读,而再大只是徒增 token 与耗时
+# —— 视觉模型按图块计费,缩一半面积就省一半钱,识别质量几乎不变。
+IMAGE_MAX_EDGE = 1600
+
+# 字节数超过它就重新编码(即使尺寸没超)。
+# 触发它的大多是手机实拍的照片(单张 3~5 MB),重新编码能压到几百 KB,
+# 既避开接口的体积上限,也避免 base64 膨胀后再超限。
+IMAGE_REENCODE_BYTES = 1_500_000
+
+# 送去识别前的最终体积上限。原图我们已经在 upload 层卡到 5 MB,
+# 这里卡的是**压缩之后**的结果 —— 还超说明是离谱的图(超大尺寸 + 无 alpha 也不可压),
+# 与其让接口报一个看不懂的错,不如自己先拒绝。
+IMAGE_MAX_SEND_BYTES = 4_000_000
+
 
 
 class ParseError(Exception):
@@ -173,13 +219,183 @@ def _parse_pdf(data: bytes) -> str:
         # 反复重传同一个文件。
         raise ParseError(
             "这份 PDF 抽不出文字 —— 它多半是扫描件或图片导出的(没有文字层)。"
-            "本系统不做 OCR。请把正文复制出来,用「粘贴文字」上传。"
+            "本系统不做 PDF 转图,但你可以把里面的关键页**截图**,"
+            "然后按图片上传 —— 那条路是通的。"
         )
     return text
 
 
 # ===========================================================================
-# 三、切块
+# 三、图片(视觉模型)
+# ===========================================================================
+
+
+def _vision_extractor():
+    """取"图片转文字"的实现。
+
+    单独一个函数是为了留出**唯一的替换点**:测试里把它换成假的,
+    就能把图片这条链路的编排逻辑(压缩、无文字判定、warning、报错)
+
+    全部覆盖掉,而不用真的连网调模型。
+
+    延迟 import 也有实际作用:本模块的其余部分都是纯函数,
+    单独 import doc_parser 不该被迫拉起整个 LLM 依赖链。
+    """
+    from .llm_service import extract_text_from_image
+
+    return extract_text_from_image
+
+
+def _prepare_image(data: bytes, ext: str) -> tuple[bytes, str]:
+    """校验图片,必要时缩放/重编码。返回 `(字节, mime)`。
+
+    **格式以 Pillow 认出来的为准,不信扩展名** —— 手机和聊天工具
+    改后缀名是常事,一个叫 `.png` 的 JPEG 其实完全能用,没理由拒。
+    反过来,一个叫 `.png` 的压缩包必须在这里被拦住。
+
+    缩放策略:
+    - 最长边 > `IMAGE_MAX_EDGE` → 缩
+    - 字节数 > `IMAGE_REENCODE_BYTES` → 重编码(照片通常在这里被压到几百 KB)
+
+    重编码时的格式选择:**带 alpha 用 PNG(保透明与文字锐利),
+    不带 alpha 用 JPEG(照片体积小得多)**。给截图用 JPEG 会糊掉小字,
+    给照片用 PNG 会大到离谱 —— 按内容选,不是按喜好选。
+    """
+    try:
+        from PIL import Image
+    except Exception as exc:  # pragma: no cover - 依赖缺失时才走到
+        raise ParseError(
+            "服务端缺少图片处理依赖 Pillow,读不了图片。"
+            "请在 backend 目录执行 pip install -r requirements.txt 后重启后端。"
+        ) from exc
+
+    try:
+        img = Image.open(io.BytesIO(data))
+        img.load()  # 真正解码一次 —— 只 open 不 load 的话,坏图要到后面才炸
+    except Exception as exc:
+        raise ParseError(
+            f"这个文件不是有效的图片(扩展名是「{ext or '无'}」,但内容不是)。"
+            "请确认选对了文件。"
+        ) from exc
+
+    fmt = (img.format or "").upper()
+    need_shrink = max(img.size) > IMAGE_MAX_EDGE
+    need_reencode = len(data) > IMAGE_REENCODE_BYTES
+
+    if not need_shrink and not need_reencode:
+        # 小图原样送 —— 重编码一次只会白白损失一次质量
+        return data, _mime_of(fmt, ext)
+
+    if need_shrink:
+        img.thumbnail((IMAGE_MAX_EDGE, IMAGE_MAX_EDGE), Image.LANCZOS)
+
+    has_alpha = img.mode in ("RGBA", "LA") or (
+        img.mode == "P" and "transparency" in img.info
+    )
+
+    buf = io.BytesIO()
+    if has_alpha:
+        img.convert("RGBA").save(buf, format="PNG", optimize=True)
+        mime = "image/png"
+    else:
+        img.convert("RGB").save(buf, format="JPEG", quality=90, optimize=True)
+        mime = "image/jpeg"
+
+    out = buf.getvalue()
+    if len(out) > IMAGE_MAX_SEND_BYTES:
+        raise ParseError(
+            f"图片压缩后仍有 {len(out) / 1024 / 1024:.1f} MB,太大了。"
+            "请裁剪出有文字的部分再上传。"
+        )
+    return out, mime
+
+
+def _mime_of(pillow_format: str, ext: str) -> str:
+    """决定发给模型的 MIME **以 Pillow 认出来的为准,不信扩展名**。
+
+    ⚠️ 这里踩过一次:一开始写的是 `IMAGE_MIME.get(ext) or ...` —— 扩展名优先。
+    结果一张内容其实是 JPEG、但被改名成 `.png` 的图,data URL 里会写成
+    `data:image/png;base64,<JPEG 字节>`,**类型与内容不符**。
+    多数接口会去嗅探真实字节所以侥幸能过,但这是靠运气;
+    正经做法是让 MIME 跟内容一致。
+
+    扩展名只在 Pillow 认不出格式时兜底(几乎不会发生,因为能 open 就有 format)。
+    """
+    table = {
+        "JPEG": "image/jpeg",
+        "JPG": "image/jpeg",
+        "PNG": "image/png",
+        "WEBP": "image/webp",
+        "BMP": "image/bmp",
+        "GIF": "image/gif",
+    }
+    return table.get(pillow_format) or IMAGE_MIME.get(ext) or "image/png"
+
+
+def _vision_error_message(exc: Exception) -> str:
+    """把 LLM 侧的异常翻成用户能照做的话。
+
+    这里**故意带上原始报错的片段**:出错的是用户自己的模型配置
+    (没配 key / 模型不支持图像 / 配额用尽),他需要看到原因才能改。
+    这与"内部错误不回显细节"不冲突 —— 那是防止泄漏服务端实现,
+    而这是用户自己请求自己账号时的一次可行动失败。
+    """
+    blob = f"{type(exc).__name__}: {exc}"
+    low = blob.lower()
+
+    if any(k in low for k in ("image", "vision", "multimodal", "data:image")) and any(
+        k in low for k in ("support", "invalid", "unsupported", "not allowed", "不支持")
+    ):
+        return (
+            "当前配置的模型不支持图像理解,读不了这张图。"
+            "请在 backend/.env 里换成支持视觉的模型(例如 qwen3.7-plus),"
+            f"或改用「粘贴文字」。原始报错:{blob[:200]}"
+        )
+    if any(k in low for k in ("401", "unauthorized", "invalid api key", "api key")):
+        return f"LLM 鉴权失败,图片识别用不了。请检查 backend/.env 里的 LLM_API_KEY。原始报错:{blob[:200]}"
+    if any(k in low for k in ("timeout", "timed out", "timedout")):
+        return f"图片识别超时了。图片可能过大或网络不稳,请稍后重试或裁剪后再传。原始报错:{blob[:200]}"
+
+    return f"图片识别失败:{blob[:300]}"
+
+
+def _parse_image(data: bytes, filename: str) -> tuple[str, list[str]]:
+    """用视觉模型把图片里的文字读出来。返回 `(文本, 警告列表)`。"""
+    image_bytes, mime = _prepare_image(data, extension_of(filename))
+
+    extractor = _vision_extractor()
+    try:
+        raw_text = extractor(
+            image_bytes, mime, hint=_title_from_filename(filename)
+        )
+    except ParseError:
+        # _prepare_image 抛的已经是面向用户的话,原样往外传
+        raise
+    except Exception as exc:
+        raise ParseError(_vision_error_message(exc)) from exc
+
+    # 图里确实没有文字 —— 明确拒绝,而不是把模型描述画面的废话入库
+    if looks_like_no_text(raw_text or ""):
+        raise ParseError(
+            "这张图里没有识别出文字。知识库只能检索文字,风景照/纯图片库进去也没用 —— "
+            "请换一张带文字的截图(攻略、门票说明、笔记都行),或直接把文字粘贴进来。"
+        )
+
+    text = (raw_text or "").strip()
+    if len(text) < MIN_USEFUL_CHARS:
+        raise ParseError(
+            f"这张图只识别出 {len(text)} 个字,太少,没法入库。"
+            "如果图里确实有攻略内容,请换一张更清晰、文字更完整的截图。"
+        )
+
+    return text, [
+        "内容由图片识别得到,可能存在识别误差(表格与手写体尤其明显)。"
+        "请自行核对门票价格、开放时间、预约规则这类关键数字。"
+    ]
+
+
+# ===========================================================================
+# 四、切块
 # ===========================================================================
 
 
@@ -285,7 +501,7 @@ def chunk_document(text: str, source: str = "") -> list[tuple[str, str]]:
 
 
 # ===========================================================================
-# 四、对外入口
+# 五、对外入口
 # ===========================================================================
 
 
@@ -362,15 +578,20 @@ def parse_file(filename: str, data: bytes) -> ParsedDocument:
     ext = extension_of(filename)
     origin = SUPPORTED_EXTENSIONS.get(ext)
     if origin is None:
-        supported = "、".join(sorted({e.lstrip('.') for e in SUPPORTED_EXTENSIONS}))
+        # 按大类列出,而不是把所有扩展名摊平 —— 用户要判断的是
+        # "我这份东西能不能传",不是认全 11 个后缀。
         raise ParseError(
-            f"不支持的文件类型「{ext or '无扩展名'}」。目前支持:{supported}。"
-            "(图片不做 OCR —— 请把攻略里的文字复制出来用「粘贴文字」上传。)"
+            f"不支持的文件类型「{ext or '无扩展名'}」。"
+            "支持:Markdown / TXT / PDF(需有文字层)/ 图片(png、jpg、webp、bmp、gif)。"
+            "iPhone 的 HEIC 照片请先转成 jpg。"
         )
     if not data:
         raise ParseError("文件是空的。")
+
     if origin == "pdf":
         raw_text, warnings = _parse_pdf(data), []
+    elif origin == "image":
+        raw_text, warnings = _parse_image(data, filename)
     else:
         raw_text, warnings = _decode_text(data)
 

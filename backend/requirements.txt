@@ -23,6 +23,27 @@ loguru>=0.7.0
 # MCP相关
 fastmcp>=2.0.0
 uv>=0.8.0
+#
+# ⚠️ 必须限制 mcp 在 1.x。这不是保守,是一次实测出来的坑。
+#
+# 全新安装(容器里)时,pip 会解析出 **mcp 2.2.0 + fastmcp 2.11.2** 这一对
+# 互不兼容的组合:
+#
+#     import fastmcp
+#     ImportError: cannot import name 'AnyFunction' from 'mcp.types'
+#
+# 而 hello_agents 的 MCPTool._discover_tools() 是
+#
+#     except Exception:
+#         self._available_tools = []      # 连日志都不打
+#
+# 于是高德工具**从 16 个变成 0 个**,而服务照常启动、接口照常返回 200 ——
+# 与本文件上面坑 #1 记的"MCP 静默失效"是同一个故障,只是成因换了:
+# 那次是 PATH 找不到 uvx,这次是依赖解析漂移。
+#
+# 本机 venv 里是 mcp 1.30.0 + fastmcp 2.14.7,能跑;两者相差一个主版本,
+# 所以**"我本地是好的"完全说明不了问题**。是 Docker 这一步才暴露的。
+mcp<2
 
 # 其他工具
 python-dateutil>=2.8.2
@@ -44,3 +65,14 @@ pymilvus>=2.5,<2.6
 # 带 [pdf] extra 是因为它提供上传攻略的 PDF 解析后端(pdfminer-six /
 # pdfplumber)。不装的话上传 PDF 会得到一句明确的提示,不会崩。
 markitdown[pdf]>=0.0.1
+
+# 图片攻略(截图)的识别链路要用:
+#   - 读图片尺寸、校验文件确实是图片(而不是改了后缀的压缩包)
+#   - 超大的图先缩到 1600px 再送去识别(直接证据:原图不仅贵,而且
+#     超过接口的大小上限会被拒)
+#
+# ⚠️ 它原本只是**间接依赖**(pdfplumber -> Pillow),在这里显式声明是必要的:
+#    间接依赖随时可能因为上游换实现而消失,而一旦消失,
+#    表现是"图片上传全挂"而不是"少个功能",排查时很难想到是依赖问题。
+#    也顺带说明了为什么固定 >=12:pdfplumber 要求 Pillow>=12.2.0。
+pillow>=12.0

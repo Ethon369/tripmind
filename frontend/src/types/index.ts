@@ -170,7 +170,8 @@ export type KnowledgeNamespaceFilter = KnowledgeNamespace | 'all'
 export type KnowledgeIngestSource = 'frozen' | 'guides' | 'all'
 
 /** 上传文档的来源。图片刻意不支持 —— 原因见后端 doc_parser.py 顶部注释 */
-export type KnowledgeDocOrigin = 'md' | 'txt' | 'pdf' | 'paste'
+/** 攻略的来源形态。与后端 doc_parser 的 origin 取值一一对应 */
+export type KnowledgeDocOrigin = 'md' | 'txt' | 'pdf' | 'image' | 'paste'
 
 /** 一条检索命中。score 是 COSINE 相似度,值域 [-1,1] */
 export interface KnowledgeHit {

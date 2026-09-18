@@ -28,14 +28,14 @@
           <p class="up-drop-main">
             把攻略拖到这里，或 <span class="up-drop-link">选择文件</span>
           </p>
-          <p class="up-drop-sub">Markdown · 纯文本 · PDF（需有文字层）· 单个不超过 5 MB</p>
-          <p class="up-drop-sub">图片不做 OCR —— 请把里面的文字复制出来用下面这种方式上传</p>
+          <p class="up-drop-sub">Markdown · 纯文本 · PDF（需有文字层）· 图片（png / jpg / webp）· 单个不超过 5 MB</p>
+          <p class="up-drop-sub">图片会由视觉模型识别成文字，识别结果里的数字请自行核对</p>
           <!-- 视觉上隐藏,但保持在无障碍树里,键盘用户用上面的 role=button 触发 -->
           <input
             ref="fileEl"
             class="up-file"
             type="file"
-            accept=".md,.markdown,.txt,.text,.pdf"
+            accept=".md,.markdown,.txt,.text,.pdf,.png,.jpg,.jpeg,.webp,.bmp,.gif"
             @change="onFileChange"
           />
         </div>
@@ -186,6 +186,7 @@ const originLabel = computed(() => {
     md: 'Markdown',
     txt: '纯文本',
     pdf: 'PDF',
+    image: '图片识别',
     paste: '粘贴',
   };
   return map[parsed.value?.origin ?? ''] ?? '';

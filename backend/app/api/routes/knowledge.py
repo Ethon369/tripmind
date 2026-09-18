@@ -738,7 +738,8 @@ def _doc_chunk_previews(doc: dict[str, Any]) -> list[DocChunkPreview]:
     response_model=DocParseResponse,
     summary="解析一篇上传的攻略（不入库）",
     description=(
-        "上传 Markdown / 纯文本 / PDF(需有文字层),或直接粘贴文字。"
+        "上传 Markdown / 纯文本 / PDF(需有文字层)/ 图片(png、jpg、webp 等),或直接粘贴文字。"
+        "图片会由视觉模型识别成文字 —— 里面没有文字的图(风景照)会被明确拒绝。"
         "返回切块预览与预估 embedding 次数;确认后调 POST /docs/{id}/ingest 真正入库。"
     ),
 )

@@ -24,7 +24,7 @@
             </tr>
             <tr>
               <td><code>uploaded</code></td>
-              <td>你上传的攻略（Markdown / 文本 / PDF 文字层）</td>
+              <td>你上传的攻略（Markdown / 文本 / PDF 文字层 / 图片截图）</td>
               <td><b>只有你知道的事</b> —— 小众路线、个人偏好、最新的避坑经验</td>
             </tr>
           </tbody>

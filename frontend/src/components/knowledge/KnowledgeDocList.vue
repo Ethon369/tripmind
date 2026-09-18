@@ -136,6 +136,7 @@ function originLabel(origin: KnowledgeDocOrigin): string {
     md: 'Markdown',
     txt: '文本',
     pdf: 'PDF',
+    image: '图片识别',
     paste: '粘贴',
   };
   return map[origin] ?? origin;
