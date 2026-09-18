@@ -8,8 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 (每日景点、天气、酒店、餐饮、预算)。后端 FastAPI + HelloAgents 框架 + 高德地图 MCP,
 前端 Vue 3 + ant-design-vue。
 
-**这是作者的简历项目**,目标岗位是 AI / 大模型应用开发。所以除了"能跑",
-还要能讲清楚技术选型和量化效果 —— 见下面的「升级路线」。
+这个项目除了"能跑",还要求能讲清楚技术选型和量化效果 —— 见下面的「升级路线」。
 
 ## 运行
 
@@ -136,13 +135,29 @@ POST /api/trip/plan
 
 | 目录 | 职责 |
 |---|---|
+| `app/api/errors.py` | 路由层的**唯一**"异常 → HTTP 响应"出口。日志记完整堆栈,客户端只拿到规范化文案 + 错误编号 |
 | `app/observability/` | `run_logger.py` 记 JSONL 事件流;`metering.py` 计量 token;`pricing.py` 峰谷定价 |
 | `app/store/` | stdlib `sqlite3` 手写 SQL,3 张表(plans / runs / llm_calls) |
 | `app/eval/` | 评测 harness:`geo`/`config`/`metrics`(自洽性+成本)/`metrics_grounding`(接地性)/`run_eval`(录制回放 CLI)/`report`(出 markdown) |
 | `app/agents/fallback.py` | 降级行程:保留请求的结构,**一个内容都不编**。纯函数,单测覆盖(降级路径 baseline 触发不到,只能靠单测) |
-| `app/services/amap_parsing.py` | 高德返回值解析(剥 MCP 外壳、拆 `"经度,纬度"`)。纯函数,`recorder.py` 与 P6 共用 |
+| `app/services/amap_parsing.py` | 高德返回值解析(剥 MCP 外壳、拆 `"经度,纬度"`、归一化 `alias`/`rating`、各工具的 `extract_*`)。纯函数,`recorder.py` 与 `amap_service.py` 共用 |
 | `app/services/mcp_launcher.py` | 拼启动高德 MCP 的命令,用绝对路径找 `uvx`。纯函数,两个 `MCPTool` 创建点共用 |
 | `app/services/knowledge_service.py` | RAG 双层知识库,**直接建在 Milvus 上**(框架不支持 Milvus)。分块/归一化/引用格式是纯函数,单测覆盖 |
+
+#### 错误处理约定(2026-09-18 统一)
+
+以前 7 个 handler 各抄一遍 `except: print(...); raise HTTPException(500, f"...{str(e)}")`,
+**把内部异常原文回给了客户端**(文件路径、库报错、连接串都可能在里面)。现在:
+
+- 路由端点套 `@handle_service_errors("动作名")`(**放在 `@router.*` 下面**),
+  自己 `raise HTTPException` 的 4xx 会**原样透传**,不会被改成 500。
+- 需要额外清理动作的端点(`plan_trip` 要把 running 记录标成 `error`)**不用装饰器**,
+  自己 except 做清理,再 `raise to_http_error("动作", e) from e`。
+- 服务层**不要再吞异常返回空值** —— 那会让"调用失败"和"真的没结果"分不清。
+- ⚠️ 装饰器**保持函数的同步/异步属性**。`plan_trip` 必须是同步 `def`(线程池保护),
+  `tests/test_api_errors.py::test_plan端点仍然是同步函数` 盯着这件事。
+- 错误日志走 `logging`(不是 print),handler 在 `app/__init__.py::_configure_logging()`
+  里装,因为 uvicorn 只配置它自己的 logger、不碰根 logger。
 
 ### 评测为什么要「录制 / 回放」两层
 
@@ -289,8 +304,25 @@ pydantic 模型那步就被拒了,根本传不到这里。留一段永远不执�
 只会让人以为有保护。
 
 `maps_text_search` 只返回 id/name/address/typecode 没有坐标,要 `maps_search_detail(id)`
-才有 `location` —— 这个事实仍然成立,`app/services/amap_service.py` 里 4 个 `TODO` 也还在。
-解析要用 `app/services/amap_parsing.py` 里那两个**被测过**的函数,不要重写:
+才有 `location` —— 这个事实仍然成立。
+
+~~`app/services/amap_service.py` 里 4 个 `TODO`~~ **已实现(2026-09-18)**:四个方法
+(`search_poi` / `get_weather` / `plan_route` / `geocode`)现在都真正解析返回,提取逻辑
+抽成了 `app/services/amap_parsing.py` 里的**纯函数**(`extract_pois` / `extract_poi_detail` /
+`extract_weather` / `extract_route` / `extract_geocode`),并且有**真实录制数据**的回归测试
+(`tests/test_amap_parsing.py` 的 `TestAgainstReal*`)。
+
+顺带改掉了两个同类的静默失败:
+- `get_poi_detail` 原来用 `re.search(r'\{.*\}')` 抽 JSON —— **就是本文件坑 #11 里那个贪婪匹配**。
+  已改用 `unwrap_mcp_result`。
+- 服务层原来 `except: return []`,让调用方分不清"没搜到"和"调用失败"(与坑 #1 的 MCP 静默
+  失效同一类)。现在**失败一律抛**,由 `app/api/errors.py` 统一处理;"调用成功但没结果"才返回空。
+
+⚠️ 三个**没有**本地 ground truth 的解析:`extract_weather` / `extract_route` / `extract_geocode`
+是按高德官方文档的结构写的(`raw_cache.json` 里只录了 `maps_text_search` 和 `maps_search_detail`)。
+想补真数据就跑 `scripts/recorder.py`。
+
+解析要用 `app/services/amap_parsing.py` 里那些**被测过**的函数,不要重写:
 `unwrap_mcp_result()` 剥 MCP 文本外壳(用贪婪正则会在嵌套 JSON 上取过头)、
 `parse_location()` 拆 `"经度,纬度"` 字符串(顺序和常见的 "lat,lng" 相反)。
 
@@ -424,7 +456,7 @@ if isinstance(aliases, (list, tuple)) and aliases:   # ← 对那 240 条恒为�
 这与坑 #7 的 `TestBboxAgainstRealData` 是同一个思路 —— **构造的输入只能验证
 "我以为的世界",只有真数据能验证"实际的世界"**。
 
-修复前后(能直接写进简历的对比):
+修复前后(可直接引用的量化对比):
 
 | 查询 | 修复前 | 修复后 |
 |---|---|---|
@@ -520,7 +552,7 @@ git config --local http.lowSpeedTime 999999
 
 ## 升级路线(P0–P9)
 
-完整方案在 `~/.claude/plans/1-2-rag-subagen-harness-3-piped-spark.md`。当前进度:
+完整方案见本地计划文档(不入仓库)。当前进度:
 
 | 阶段 | 内容 | 状态 |
 |---|---|---|
@@ -543,10 +575,10 @@ git config --local http.lowSpeedTime 999999
 
 ## 工作方式
 
-作者是编程新手,明确担心"改动太多后理解不了自己的项目"。所以:
+维护者明确担心"改动太多后理解不了自己的项目"。所以:
 
 - **优先新增文件,少动现有代码**;每个阶段独立可交付、可回滚
 - 注释要写**为什么**,不只是**是什么**
 - 验证要给出可复现的命令和**真实输出**,不要只说"应该没问题"
-- 需要取舍的决策(端口、方案选择)直接问,不要替他定
-- **不要自行触发真实的 LLM 生成** —— 那是花他自己的 API 额度
+- 需要取舍的决策(端口、方案选择)直接问,不要自行决定
+- **不要自行触发真实的 LLM 生成** —— 那会产生 API 费用
