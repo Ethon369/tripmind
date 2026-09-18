@@ -4,7 +4,31 @@ import { resolve } from 'path'
 
 // https://vite.dev/config/
 export default defineConfig({
-  plugins: [vue()],
+  plugins: [
+    vue(),
+    {
+      // 开发环境下把 index.html 里的 /config.js 标签去掉。
+      //
+      // 为什么:`/config.js` 是**容器启动时**由 nginx 生成的(运行时注入的
+      // 高德 Key),开发环境根本没有这个文件。而 vite 的 SPA 回退会把
+      // 这个路径**返回成 index.html** —— 浏览器拿 text/html 当脚本加载,
+      // 控制台就多一条 "Mismatched MIME type" 的报错。
+      //
+      // 它无害(不影响任何功能),但每个开发会话都刷一条看不懂的错误,
+      // 会把真正的问题淹掉 —— 留着不值。
+      name: 'tripmind-strip-runtime-config-in-dev',
+      transformIndexHtml: {
+        order: 'pre',
+        handler(html: string, ctx: { server?: unknown }) {
+          if (!ctx.server) return html // 构建时保留,容器里要靠它
+          return html.replace(
+            /\s*<!--\s*@runtime-config\s*-->[\s\S]*?<!--\s*\/@runtime-config\s*-->/,
+            ''
+          )
+        }
+      }
+    }
+  ],
   resolve: {
     alias: {
       '@': resolve(__dirname, 'src')

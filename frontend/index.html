@@ -6,7 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>途灵 TripMind — AI 智能行程规划</title>
     <!--
-      运行时配置。
+      运行时配置（只在**构建产物**里生效）。
 
       为什么需要它:`VITE_*` 变量是**构建期**被编译进产物的,所以按常规做法,
       换一个高德 Key 就得重新构建整个前端镜像。这对"别人拿这个项目跑起来"
@@ -15,11 +15,17 @@
       这里改成:容器启动时由 nginx 的入口脚本按环境变量生成 `/config.js`,
       页面在加载业务代码**之前**先读它。于是改 Key 只要改环境变量 + 重启容器。
 
-      开发环境(npm run dev)没有这个文件,所以下面这行会 404 —— 无所谓,
-      脚本加载失败不会影响后面的 module 脚本,`src/config/runtime.ts`
-      会自动回落到 `import.meta.env`。onerror 只是把控制台里的报错消掉。
+      ⚠️ 开发环境**看不到这个标签** —— vite.config.ts 里的
+      `tripmind-strip-runtime-config-in-dev` 插件会在 dev 下把这对注释
+      连同标签一起删掉。因为 dev 没有 /config.js,而 vite 的 SPA 回退会
+      把这个路径返回成 index.html,浏览器拿它当脚本加载会报一条
+      Mismatched MIME type —— 无害但扰人。
+
+      删除逻辑依赖下面这对注释标记,改结构时别把它们删了。
     -->
+    <!--@runtime-config-->
     <script src="/config.js" onerror="void 0"></script>
+    <!--/@runtime-config-->
   </head>
   <body>
     <div id="app"></div>

@@ -683,14 +683,46 @@ async function initMap() {
     if (activeDay.value !== null) void focusDay(activeDay.value);
   } catch (e: unknown) {
     // 地图加载失败不该弹全局 toast（用户是来看行程的，不是来看地图报错的），
-    // 在卡片内给一行说明即可。错误码原样带出来 —— 它区分了四种完全不同的故障：
-    //   INVALID_USER_KEY / INVALID_USER_DOMAIN / USER_KEY_PLAT_NOMATCH / INVALID_USER_SCODE
+    // 在卡片内给一行说明即可。
     console.error('地图加载失败:', e);
-    const info = (e as { info?: string })?.info || (e as Error)?.message || '';
-    mapError.value = info
-      ? `地图加载失败：${info}`
-      : '地图加载失败。请确认 frontend/.env 里已配置高德 Web端(JS API) 的 Key。';
+    const why = describeMapError(e);
+    mapError.value = why
+      ? `地图加载失败：${why}`
+      : '地图加载失败。请确认已配置高德 Web端(JS API) 的 Key。';
   }
+}
+
+/**
+ * 从 AMapLoader 抛出来的东西里尽量挖出有用的描述。
+ *
+ * **为什么需要这个函数。** loader 的失败值形态**很不统一**：
+ *
+ * - 正常错误 → `{ info: 'INVALID_USER_KEY' }`（文档里那几种错误码走这条）
+ * - key 为空 → **一个字符串** `"请填写key"`
+ * - **SDK 脚本根本没加载成功** → **一个 Event 对象**，它既没有 `info`
+ *   也没有 `message`
+ *
+ * 原来只取 `info` / `message`，碰到后两种就退化成一句
+ * 「请确认已配置 Key」—— 而两种原因完全不同（一种要去改 Key，一种要去查
+ * 网络/插件/CSP），提示却一模一样，等于把线索丢了。
+ * 实际排查时就卡在这里：明明是脚本没加载，提示却说 Key 没配。
+ */
+function describeMapError(e: unknown): string {
+  if (e === null || e === undefined) return '';
+  if (typeof e === 'string') return e;
+
+  const obj = e as { info?: unknown; message?: unknown; type?: unknown };
+  if (typeof obj.info === 'string' && obj.info) return obj.info;
+  if (typeof obj.message === 'string' && obj.message) return obj.message;
+
+  // Event（脚本 onerror）走这里：没有 info / message，只有 type（"error"）
+  if (typeof obj.type === 'string' && obj.type) {
+    return (
+      `高德 SDK 脚本加载失败（Event: ${obj.type}）。` +
+      '常见原因：浏览器插件或网络拦截了 webapi.amap.com、内容安全策略(CSP)限制、或断网。'
+    );
+  }
+  return String(e);
 }
 
 /**
