@@ -1,6 +1,9 @@
 """多智能体旅行规划系统"""
 
+import concurrent.futures as cf
+import contextvars
 import json
+import re
 from typing import Dict, Any, List
 from hello_agents import SimpleAgent
 from hello_agents.tools import MCPTool
@@ -233,32 +236,45 @@ class MultiAgentTripPlanner:
             print(f"偏好: {', '.join(request.preferences) if request.preferences else '无'}")
             print(f"{'='*60}\n")
 
-            # 步骤1: 景点搜索Agent搜索景点
-            print("📍 步骤1: 搜索景点...")
-            obs.stage_start("attractions")
-            attraction_query = self._build_attraction_query(request)
-            attraction_response = self.attraction_agent.run(attraction_query)
-            obs.stage_end("attractions")
-            obs.stage_response("attractions", attraction_response)
-            print(f"景点搜索结果: {attraction_response[:200]}...\n")
-
-            # 步骤2: 天气查询Agent查询天气
-            print("🌤️  步骤2: 查询天气...")
-            obs.stage_start("weather")
-            weather_query = f"请查询{request.city}的天气信息"
-            weather_response = self.weather_agent.run(weather_query)
-            obs.stage_end("weather")
-            obs.stage_response("weather", weather_response)
-            print(f"天气查询结果: {weather_response[:200]}...\n")
-
-            # 步骤3: 酒店推荐Agent搜索酒店
-            print("🏨 步骤3: 搜索酒店...")
-            obs.stage_start("hotels")
-            hotel_query = f"请搜索{request.city}的{request.accommodation}酒店"
-            hotel_response = self.hotel_agent.run(hotel_query)
-            obs.stage_end("hotels")
-            obs.stage_response("hotels", hotel_response)
-            print(f"酒店搜索结果: {hotel_response[:200]}...\n")
+            # 步骤1-3: 三个专家 agent **并发**跑
+            #
+            # 它们之间**没有任何数据依赖**:各自的 query 只由 request 决定,
+            # 谁先返回都不影响另外两个的结果。原来串行写只是因为"步骤1、2、3"
+            # 读起来顺,不是因为有依赖。实测串行约 15 秒、并发 5 秒。
+            #
+            # ⚠️ 两个并发前提,都实测过,不是靠读代码推断的:
+            #
+            # 1. **共享的 `self.amap_tool` 可以并发。** 三个 agent 用的是同一个
+            #    MCPTool 实例,而 `MCPTool.run()` 内部是 `async with MCPClient(...)`,
+            #    每次调用**新建一个连接**(stdio 就是一个新的 uvx 子进程)、用完即关,
+            #    所以实例层面无状态。仍然做了对照实验(`scripts/check_mcp_concurrency.py`):
+            #    三个线程同时查北京/上海/成都,每份结果里只出现自己那个城市。
+            #    **必须实测** —— 判断错了的症状是"景点张冠李戴",而行程里不会报错。
+            #
+            # 2. **`collect_usage()` 用 ContextVar,子线程默认继承不到。**
+            #    不处理的话三个 agent 的 token 用量会**静默丢失**:历史页的成本
+            #    显示 ¥0、llm_calls 少 3 次,而没有任何报错。所以每条任务都带上
+            #    主线程上下文的**副本**去跑。
+            #    ⚠️ 每份任务必须是**各自的副本**:`ctx.run()` 在同一个 Context
+            #    对象上被两个线程同时进入会抛 RuntimeError("already entered")。
+            #
+            # 失败行为保持不变:任意一个 agent 抛异常,`fut.result()` 会重新抛出,
+            # 由外层统一的 except 走降级 —— 不会因为并行而改变错误处理路径。
+            print("🚀 步骤1-3: 景点 / 天气 / 酒店 三个专家并发查询...\n")
+            responses = self._run_experts_parallel(
+                obs,
+                [
+                    ("attractions", self.attraction_agent,
+                     self._build_attraction_query(request)),
+                    ("weather", self.weather_agent,
+                     f"请查询{request.city}的天气信息"),
+                    ("hotels", self.hotel_agent,
+                     f"请搜索{request.city}的{request.accommodation}酒店"),
+                ],
+            )
+            attraction_response = responses["attractions"]
+            weather_response = responses["weather"]
+            hotel_response = responses["hotels"]
 
             # 步骤3.5: 检索知识库(P7,可用 ENABLE_RAG 开关)
             #
@@ -312,6 +328,53 @@ class MultiAgentTripPlanner:
             obs.run_end(trip_plan, ok=False, error=f"{type(e).__name__}: {e}")
             return trip_plan
     
+    def _run_experts_parallel(
+        self,
+        obs: "NullObserver",
+        tasks: list[tuple[str, Any, str]],
+    ) -> dict[str, str]:
+        """并发跑几个互不依赖的 agent,返回 `{阶段名: 响应}`。
+
+        Args:
+            tasks: `[(阶段名, agent, query), ...]`。阶段名同时用于 observer 的
+                计时与响应记录 —— 与串行时写进 `data/runs/*.jsonl` 的字段一致,
+                所以改并发**不会**让历史数据断掉、也不需要改分析脚本。
+
+        为什么不干脆把所有阶段都并行:只有**彼此没有数据依赖**的才能并。
+        planner 要读前三个的输出,知识库检索要给 planner 拼 prompt,
+        这两个必须留在后面串行。
+        """
+        # 主线程上下文的副本 —— 让子线程也能看到 collect_usage() 设的
+        # ContextVar,否则 token 计量会静默丢失。每份任务用**各自的副本**:
+        # 同一个 Context 对象被两个线程同时 run() 会抛 RuntimeError。
+        ctx = contextvars.copy_context()
+
+        def _run_one(name: str, agent: Any, query: str) -> str:
+            obs.stage_start(name)
+            try:
+                resp = agent.run(query)
+            finally:
+                # stage_end 必须执行 —— 少一次就会让这次运行的 stages 列表
+                # 少一项,而 run_end 的 elapsed 与各阶段之和会对不上,
+                # 排查时会被误导成"时间花在别的地方"。
+                obs.stage_end(name)
+            obs.stage_response(name, resp)
+            print(f"  ✓ {name} 完成: {resp[:160]}...")
+            return resp
+
+        # `max_workers=0` 会直接抛 ValueError("max_workers must be greater
+        # than 0") —— 空任务列表是合法输入(由调用方决定是否要跑),不该炸。
+        with cf.ThreadPoolExecutor(
+            max_workers=max(1, len(tasks)), thread_name_prefix="trip-expert"
+        ) as pool:
+            futures = {
+                name: pool.submit(ctx.copy().run, _run_one, name, agent, query)
+                for name, agent, query in tasks
+            }
+            # result() 会把子线程里的异常**原样重新抛出**,交给 plan_trip 的
+            # except 统一走降级 —— 并发不改变失败时的行为。
+            return {name: fut.result() for name, fut in futures.items()}
+
     def _rag_enabled(self) -> bool:
         """RAG 开关。配置里默认关 —— 这样「加了 RAG」和「没加」两组数字
         可以用同一份代码跑出来,而不是靠改代码前后对比(那种对比不可信:
@@ -453,24 +516,8 @@ class MultiAgentTripPlanner:
         """
         obs = observer or NullObserver()
         try:
-            # 尝试从响应中提取JSON
-            # 查找JSON代码块
-            if "```json" in response:
-                json_start = response.find("```json") + 7
-                json_end = response.find("```", json_start)
-                json_str = response[json_start:json_end].strip()
-            elif "```" in response:
-                json_start = response.find("```") + 3
-                json_end = response.find("```", json_start)
-                json_str = response[json_start:json_end].strip()
-            elif "{" in response and "}" in response:
-                # 直接查找JSON对象
-                json_start = response.find("{")
-                json_end = response.rfind("}") + 1
-                json_str = response[json_start:json_end]
-            else:
-                raise ValueError("响应中未找到JSON数据")
-            
+            json_str = _extract_json_object(response)
+
             # 解析JSON
             data = json.loads(json_str)
             
@@ -500,6 +547,45 @@ class MultiAgentTripPlanner:
         原来的实现在这里现造"北京景点1"和写死的北京坐标,详见 fallback.py 的说明。
         """
         return build_empty_plan(request, reason=reason)
+
+
+def _extract_json_object(text: str) -> str:
+    """从模型输出里抠出**第一个** JSON 对象。抠不到就抛 ValueError。
+
+    为什么单独抽一个函数、并且**顺序和旧实现相反**:
+
+    旧实现先判断 "有没有 ```",有就按"开头围栏 → 下一个围栏"切。
+    问题是模型经常**只写一个收尾的围栏**(它以为自己在关闭一个代码块,
+    而开头那半个它没写)。这时候 `find("```", json_start)` 返回 -1,
+    切片 `response[start:-1]` 变成空串,于是 `json.loads("")` 抛
+    `JSONDecodeError: Expecting value: line 1 column 1 (char 0)` ——
+
+    **一份完全合法的行程因此被判成"解析失败",降级成空白页。**
+    实测到过:planner 输出了 3603 字符的 3 天行程,末尾多了个 ```,
+    整趟生成(约 40 秒、7 次 LLM 调用)的结果被丢掉。而它在日志里
+    不算错误 —— `ok=True`,只有 `fallback_used=True`。
+
+    所以现在的规则是:**围栏只在成对出现时才剥**,否则一律退回
+    "第一个 `{` 到最后一个 `}`"。后者对裸 JSON、前后夹废话、
+    以及多写半个围栏这三种情况都成立。
+    """
+    s = (text or "").strip()
+    if not s:
+        raise ValueError("响应为空")
+
+    # 成对的代码块才剥 —— 语言标记可选
+    fence = re.match(r"^```[a-zA-Z]*\s*\n?(.*?)\n?```\s*$", s, re.S)
+    if fence:
+        s = fence.group(1).strip()
+    else:
+        # 也可能是 ```json 开头但没有收尾(被 max_tokens 截断之类),
+        # 那也把开头那半个去掉 —— 后面的 `{`...`}` 照样能抠出来。
+        s = re.sub(r"^```[a-zA-Z]*\s*", "", s)
+
+    i, j = s.find("{"), s.rfind("}")
+    if i < 0 or j <= i:
+        raise ValueError("响应中未找到JSON数据")
+    return s[i : j + 1]
 
 
 # 全局多智能体系统实例

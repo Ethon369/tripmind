@@ -392,13 +392,19 @@ export async function listPlans(
   scope: PlanScope = 'mine'
 ): Promise<PlanListResponse> {
   try {
+    // ⚠️ 必须显式覆盖超时。默认的 300 秒是给「生成行程」定的,
+    //    一个只读列表继承它的后果是:**接口只要卡住,历史页就转满五分钟的
+    //    圈,期间不给任何反馈** —— 用户无法区分"数据多"和"服务挂了"。
+    //    列表的实际耗时是几百毫秒,15 秒已经宽得离谱。
     const response = await apiClient.get<PlanListResponse>('/api/trip/plans', {
-      params: { limit, offset, scope }
+      params: { limit, offset, scope },
+      timeout: 15000
     })
     return response.data
   } catch (error: unknown) {
     console.error('读取历史行程失败:', error)
     throw toApiError(error, '读取历史行程失败', {
+      byCode: { ECONNABORTED: '读取超时。后端可能正在生成行程，或者卡住了。' },
       byStatus: { 403: '只有管理员可以查看全部用户的行程' }
     })
   }
