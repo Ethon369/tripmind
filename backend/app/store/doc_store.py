@@ -58,6 +58,10 @@ def _row_to_doc(row: sqlite3.Row, *, with_content: bool) -> dict[str, Any]:
         "created_at": row["created_at"],
         "ingested_at": row["ingested_at"],
         "chunk_ids": _loads(row["chunk_ids"]) or [],
+        # 归属。**给不给前端看由路由决定**(普通用户看到的永远是自己那批),
+        # 存储层如实返回 —— 让 store 知道"当前是谁"会把权限逻辑摊到两层。
+        # 用 keys() 兜底:老库刚迁移完、或者调用方自己拼的查询可能没这一列。
+        "user_id": row["user_id"] if "user_id" in row.keys() else None,
     }
     if with_content:
         out["content"] = row["content"]
@@ -91,8 +95,9 @@ class DocStore:
                 """
                 INSERT OR IGNORE INTO knowledge_docs
                     (id, title, origin, content, content_hash, char_count,
-                     chunk_count, chunk_ids, status, error, created_at, ingested_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', NULL, ?, NULL)
+                     chunk_count, chunk_ids, status, error, created_at, ingested_at,
+                     user_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', NULL, ?, NULL, ?)
                 """,
                 (
                     doc["id"],
@@ -104,6 +109,7 @@ class DocStore:
                     doc.get("chunk_count", 0),
                     json.dumps(doc.get("chunk_ids") or [], ensure_ascii=False),
                     _now(),
+                    doc.get("user_id"),
                 ),
             )
             return cur.rowcount > 0
@@ -145,29 +151,51 @@ class DocStore:
             ).fetchone()
             return _row_to_doc(row, with_content=with_content) if row else None
 
-    def list_docs(self, limit: int = 100) -> list[dict[str, Any]]:
-        """列表,新的在前。不带 content。"""
+    def list_docs(self, limit: int = 100, user_id: str | None = None) -> list[dict[str, Any]]:
+        """列表,新的在前。不带 content。
+
+        Args:
+            user_id: 只列这个账号上传的。**None 表示不过滤(全部)** ——
+                所以"看全部"这个权限必须在调用方把关,见 `routes/knowledge.py`。
+                与 `PlanStore.list_plans` 是同一套约定,不要在这里发明第三种。
+
+        注意 `user_id=xxx` 这个条件**天然排除无主记录**(`user_id IS NULL`):
+        SQL 的 `= ?` 不会匹配 NULL。这正是想要的 —— 老数据只有管理员看得到。
+        """
+        sql = "SELECT * FROM knowledge_docs"
+        params: list[Any] = []
+        if user_id is not None:
+            sql += " WHERE user_id = ?"
+            params.append(user_id)
+        sql += " ORDER BY created_at DESC, id DESC LIMIT ?"
+        params.append(int(limit))
+
         with connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
-            rows = conn.execute(
-                """
-                SELECT * FROM knowledge_docs
-                 ORDER BY created_at DESC, id DESC
-                 LIMIT ?
-                """,
-                (int(limit),),
-            ).fetchall()
+            rows = conn.execute(sql, params).fetchall()
             return [_row_to_doc(r, with_content=False) for r in rows]
 
-    def summary(self) -> dict[str, Any]:
-        """各状态的数量与已入库的总块数,给「进阶」区的概览用。"""
+    def summary(self, user_id: str | None = None) -> dict[str, Any]:
+        """各状态的数量与已入库的总块数,给「进阶」区的概览用。
+
+        `user_id` 的语义与 `list_docs` 相同:None = 不过滤。
+        统计必须跟着同一个范围走 —— 否则普通用户会看到"共 12 篇"而列表里只有 2 篇,
+        那种对不上会让人以为列表漏了数据。
+        """
+        where = ""
+        params: list[Any] = []
+        if user_id is not None:
+            where = " WHERE user_id = ?"
+            params.append(user_id)
+
         with connect(self.db_path) as conn:
             rows = conn.execute(
-                """
+                f"""
                 SELECT status, COUNT(*) AS n, COALESCE(SUM(chunk_count), 0) AS chunks
-                  FROM knowledge_docs
+                  FROM knowledge_docs{where}
                  GROUP BY status
-                """
+                """,
+                params,
             ).fetchall()
             by_status = {r["status"]: {"docs": r["n"], "chunks": r["chunks"]} for r in rows}
         return {

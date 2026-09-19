@@ -92,30 +92,105 @@ class Settings(BaseSettings):
     # 注入 prompt 的条数。太多会挤占上下文、太少覆盖不到 —— 4 条是权衡后的取值
     rag_top_k: int = 4
 
-    # ---------- 管理接口鉴权 ----------
+    # ---------- 账号鉴权 ----------
     #
-    # 项目**没有用户体系**(行程靠链接分享,这是产品设定,不是缺失),
-    # 所以也不需要完整的登录 + RBAC。但有几类接口一旦公开就等同于把
-    # 后台交出去 —— 实测确认过:部署上线后从公网可以直接
-    #   · POST /api/knowledge/ingest  (带 recreate 就是**清库**)
-    #   · POST /api/knowledge/docs/parse  (未鉴权的文件上传)
-    #   · DELETE /api/knowledge/docs/{id}
-    #   · POST /api/knowledge/rag-toggle  (任意人可开关 RAG)
-    #   · DELETE /api/trip/plans/{id}     (删任意人的行程)
-    # 所以给这些**写操作**加一个共享口令(`X-Admin-Token` 请求头)。
+    # 取代原来的共享口令(`TRIPMIND_ADMIN_TOKEN`)。当时没有用户体系,
+    # 只用"一个口令挡所有写操作"过渡;现在需要区分"谁是谁",因为
+    # 行程的可见范围要按归属算 —— 那是共享口令表达不了的。
     #
-    # 只读接口(status / search / sources / 行程列表与详情)不加:
-    # 它们要么是前端正常展示要用的,要么本来就是要分享出去的。
+    # 四个值的分工:
     #
-    # ⚠️ 没有配置时是 **fail-closed** —— 见 `app/api/deps.py` 的
-    #    `require_admin()`:不配就返回 503,而不是放行。公开部署上
-    #    「忘了配」不该等于「任何人都能清库」。
+    #   session_ttl_hours        一次登录能顶多久。7 天是"不天天输密码"和
+    #                            "令牌泄露的有效窗口"之间的折中。
+    #   password_hash_iterations pbkdf2 轮数。**测试会把它调到很小**
+    #                            (600k 轮约 0.3 秒/次,几十个账号就把
+    #                             测试套件从几秒拖到几十秒)。
+    #   password_min_length      密码下限。只要求长度,不要求大小写数字混合
+    #                            —— 理由见 `services/security.py`。
+    #   admin_username/password  **引导账号**:只在库里一个账号都没有时
+    #                            用来创建第一个管理员,之后完全不再参与。
     #
-    # 用 AliasChoices 是因为字段叫 `admin_token`,而 .env 里想写成
-    # `TRIPMIND_ADMIN_TOKEN`(带前缀不易和别人的变量撞)。
-    admin_token: str = Field(
-        default="",
-        validation_alias=AliasChoices("TRIPMIND_ADMIN_TOKEN", "admin_token"),
+    # ⚠️ `admin_password` 的默认值是 `admin123`,这是**有意保留的已知弱口令**:
+    #    没有它,空库部署后谁都登不进去(没有账号可用来建账号),会被迫先手改
+    #    数据库或跑 CLI。代价是公开仓库里存在一个默认凭据 —— 所以:
+    #      · 它**只在空库时生效一次**,给已有账号的部署改这两项不会有任何影响;
+    #      · 启动日志里会显著提示"请立即修改";
+    #      · 生产部署应显式设 `TRIPMIND_ADMIN_PASSWORD`(见 docs/DEPLOYMENT.md)。
+    # ⚠️ 这五个字段都用 AliasChoices 带 `TRIPMIND_` 前缀别名。原因和其它配置项
+    #    一样:不带前缀的名字(`SESSION_TTL_HOURS`、`ADMIN_PASSWORD`…)太通用,
+    #    在同一台机器上跑着别的服务时很容易撞车 —— 而撞车的表现是
+    #    "我明明改了配置但它没生效",不会有任何报错。
+    #    **文档里写的就是带前缀的形式**, 所以这里必须真的有这个别名。
+    admin_username: str = Field(
+        default="admin",
+        validation_alias=AliasChoices("TRIPMIND_ADMIN_USERNAME", "admin_username"),
+    )
+    admin_password: str = Field(
+        default="admin123",
+        validation_alias=AliasChoices("TRIPMIND_ADMIN_PASSWORD", "admin_password"),
+    )
+    session_ttl_hours: int = Field(
+        default=168,
+        validation_alias=AliasChoices(
+            "TRIPMIND_SESSION_TTL_HOURS", "SESSION_TTL_HOURS", "session_ttl_hours"
+        ),
+    )
+    password_hash_iterations: int = Field(
+        default=600_000,
+        validation_alias=AliasChoices(
+            "TRIPMIND_PASSWORD_HASH_ITERATIONS",
+            "PASSWORD_HASH_ITERATIONS",
+            "password_hash_iterations",
+        ),
+    )
+    password_min_length: int = Field(
+        default=6,
+        validation_alias=AliasChoices(
+            "TRIPMIND_PASSWORD_MIN_LENGTH", "PASSWORD_MIN_LENGTH", "password_min_length"
+        ),
+    )
+
+    # 自助注册开关。默认**开** —— 首页是公开的落地页,"免费开始"必须能直接注册,
+    # 否则那个按钮只能通向"请联系管理员"。
+    #
+    # 但它是一个真实的攻击面:任何人都能建账号。所以留一个关掉的开关 ——
+    # 被刷号、或者临时想改成邀请制时,`.env` 里写
+    # `TRIPMIND_ALLOW_REGISTRATION=false` 重启即可,关闭时接口回 403。
+    #
+    # ⚠️ 注册出来的账号**只能是普通用户**,角色写死在接口里,不接受客户端传参 ——
+    #    见 `routes/auth.py::register`。这是这套权限模型的底线:
+    #    一旦注册能选 admin,整个 RBAC 就没了。
+    allow_registration: bool = Field(
+        default=True,
+        validation_alias=AliasChoices(
+            "TRIPMIND_ALLOW_REGISTRATION", "ALLOW_REGISTRATION", "allow_registration"
+        ),
+    )
+
+    # ---------- LLM:思维链开关 ----------
+    #
+    # **默认关**。实测同一个"生成小 JSON"的请求:
+    #
+    #     不传参数(厂商默认开)  输出 3,570 tokens / 47.7 秒
+    #     enable_thinking=false  输出   878 tokens / 12.1 秒
+    #
+    # 生成的内容长度几乎一样(2,358 vs 2,362 字符),也就是说**约 75% 的输出
+    # token 是看不见的推理过程**。而本项目的 LLM 任务都是"按已经查好的事实
+    # 整理成结构化输出",不需要推理链 —— 景点/天气/酒店都是前三个 agent 查的,
+    # planner 做的是排版。
+    #
+    # 换算到真实运行:planner 一步输出 6,240 tokens、耗时 84 秒(占总耗时 63%),
+    # 关掉之后预计降到 20 秒上下 —— 比换模型有效得多,而且内容不变。
+    #
+    # ⚠️ 这个参数**只有通义/百炼系列认**(由 `metering.thinking_extra_body`
+    #    按模型名前缀判断)。换到 DeepSeek / OpenAI 官方接口时它不会被传过去,
+    #    所以换厂商是安全的。
+    #    想恢复厂商默认行为(比如发现某个任务确实需要推理)就设成 true。
+    llm_enable_thinking: bool = Field(
+        default=False,
+        validation_alias=AliasChoices(
+            "TRIPMIND_LLM_ENABLE_THINKING", "LLM_ENABLE_THINKING", "llm_enable_thinking"
+        ),
     )
 
     # ---------- Embedding(硅基流动,OpenAI 兼容) ----------
@@ -285,4 +360,14 @@ def print_config():
     print(f"LLM Base URL: {llm_base_url}")
     print(f"LLM Model: {llm_model}")
     print(f"日志级别: {settings.log_level}")
+
+    # 账号体系。**刻意不打印密码**(包括引导密码)——
+    # 日志经常被收集、转发或贴进 issue,一行明文密码等于把它写到了别处。
+    # 需要核对时让部署者自己去看 .env。
+    print(f"登录会话有效期: {settings.session_ttl_hours} 小时")
+    print(
+        f"引导管理员: {settings.admin_username} "
+        f"({'使用 .env 里的密码' if os.getenv('TRIPMIND_ADMIN_PASSWORD') else '默认密码(请立即修改)'})"
+        " —— 仅在库中没有任何账号时生效"
+    )
 

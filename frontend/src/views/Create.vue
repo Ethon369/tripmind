@@ -519,7 +519,7 @@ async function submit() {
 }
 
 function cancel() {
-  router.push('/');
+  router.push('/app');
 }
 </script>
 

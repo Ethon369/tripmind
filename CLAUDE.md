@@ -89,9 +89,19 @@ cd frontend && npm.cmd run build
 
 ### 测试
 
-测试在 `backend/tests/`,只覆盖**纯函数** —— 目前是 `app/eval/`(指标、地理计算)
-和 `app/services/`(高德返回值解析、uvx 定位)。这些函数不碰网络、不碰数据库、
-不调 LLM,构造一个 `EvalContext` 或几个临时文件就能验证,所以跑一轮不到 1 秒。
+测试在 `backend/tests/`,主体覆盖**纯函数** —— `app/eval/`(指标、地理计算)、
+`app/services/`(高德返回值解析、uvx 定位、密码哈希)。这些函数不碰网络、
+不碰数据库、不调 LLM,构造一个 `EvalContext` 或几个临时文件就能验证。
+
+另有两类**不是纯函数**的测试:
+
+- **HTTP 层**(`test_auth.py` 的一部分):用 `TestClient` 打当前代码的 ASGI 应用,
+  验证状态码与权限边界。**不要**用 `with TestClient(app)` —— 那会触发 startup
+  去拉起高德 MCP 子进程,几十秒起步。
+- **契约测试**:比对"后端真实路由表"与一份端点权限金名单(`test_auth.py` 尾部的
+  `ADMIN_ONLY_ENDPOINTS` / `PUBLIC_ENDPOINTS`)。防的是漏挂依赖这类**静默**失效。
+
+改哪一块就跑对应的文件即可,例如改鉴权跑 `pytest tests/test_auth.py -q`。
 
 `tests/conftest.py` 里有构造行程的辅助函数(`make_plan` / `make_day` / ...),
 默认造一份**健康的**行程;测试想验证某个问题能被抓到,就只改坏那一处。
@@ -122,8 +132,8 @@ HelloAgents 框架**没有**多智能体编排能力(没有 AgentTeam / Orchestr
 ### 数据流
 
 ```
-POST /api/trip/plan
-  → plan_store.create_running()      先落一条 status='running' 的记录(拿到 plan_id)
+POST /api/trip/plan                    (需登录 —— 见「账号与访问控制」一节)
+  → plan_store.create_running()      先落一条 status='running' 的记录(拿到 plan_id,带 user_id)
   → collect_usage()                  开一个用量收集器(contextvars,为将来并发准备)
   → agent.plan_trip(request, observer)
       4 个阶段各调一次 observer.stage_start/end
@@ -136,8 +146,11 @@ POST /api/trip/plan
 | 目录 | 职责 |
 |---|---|
 | `app/api/errors.py` | 路由层的**唯一**"异常 → HTTP 响应"出口。日志记完整堆栈,客户端只拿到规范化文案 + 错误编号 |
+| `app/api/deps.py` | 鉴权依赖:`get_current_user`(可选)→ `require_user`(401)→ `require_admin_role`(403)。另有 `can_access_plan()` 判行程归属 |
 | `app/observability/` | `run_logger.py` 记 JSONL 事件流;`metering.py` 计量 token;`pricing.py` 峰谷定价 |
-| `app/store/` | stdlib `sqlite3` 手写 SQL,3 张表(plans / runs / llm_calls) |
+| `app/store/` | stdlib `sqlite3` 手写 SQL,6 张表(plans / runs / llm_calls / plan_knowledge / users / sessions)。`db.py` 的 `_migrate()` 负责给老库加列 |
+| `app/services/security.py` | 密码哈希(pbkdf2,标准库)与会话令牌。**纯函数**,可离线单测 |
+| `app/services/login_guard.py` | 登录失败节流(按用户名 + IP 两个维度)。进程内内存,`--workers 1` 是它的前提 |
 | `app/eval/` | 评测 harness:`geo`/`config`/`metrics`(自洽性+成本)/`metrics_grounding`(接地性)/`run_eval`(录制回放 CLI)/`report`(出 markdown) |
 | `app/agents/fallback.py` | 降级行程:保留请求的结构,**一个内容都不编**。纯函数,单测覆盖(降级路径 baseline 触发不到,只能靠单测) |
 | `app/services/amap_parsing.py` | 高德返回值解析(剥 MCP 外壳、拆 `"经度,纬度"`、归一化 `alias`/`rating`、各工具的 `extract_*`)。纯函数,`recorder.py` 与 `amap_service.py` 共用 |
@@ -223,6 +236,90 @@ embedder 仍然复用框架的(`DashScopeEmbedding` → 硅基流动 REST,bge-m3
 1. `/result/{id}` —— 从后端取(刷新、换标签页、分享都走这条)
 2. `/result`(无 id)—— 回落到 `sessionStorage`,兼容旧路径
 3. `/share/{id}` —— 同一个组件,`route.path.startsWith('/share')` 判定只读模式
+
+### 账号与访问控制
+
+**它取代了原来的共享口令(`TRIPMIND_ADMIN_TOKEN` / `X-Admin-Token`)。**
+换的原因不是"口令不够安全",而是一个口令**表达不了**的需求:
+
+> 「普通用户只能看自己的历史行程,管理员能看所有人的」
+
+这句话里有一个"谁",而共享口令没有主体 —— 服务端不知道请求是谁发的,
+也就无法回答"这条数据是不是他的"。所以引入了账号。
+
+四个组件的分工(改任何一处之前先看清边界):
+
+| 位置 | 职责 |
+|---|---|
+| `app/services/security.py` | 密码哈希(pbkdf2-sha256,标准库)与令牌生成。**纯函数**,不碰数据库 |
+| `app/services/login_guard.py` | 登录失败节流。进程内内存 → **`--workers 1` 是它的前提** |
+| `app/store/user_store.py` | `users` / `sessions` 两张表 + 账号规则(重名、最后一个管理员不可降级…) |
+| `app/api/deps.py` | 把请求头里的令牌翻译成"当前账号",再判角色 |
+
+三层依赖的形状(**顺序不能乱**):
+
+```
+get_current_user     可选,拿不到给 None,从不抛   ← 分享链接靠它保持匿名可读
+require_user         没有账号 → 401
+require_admin_role   角色不是 admin → 403
+```
+
+**知识库是三层,归属规则不同** —— 这是最容易写错的一处:
+`poi_facts` / `city_guides` 是**全站共享**的公共知识;`uploaded`(**用户上传的**)
+**按人隔离**。所以"普通用户也能用知识库"= 文档管理接口改成"登录 + 按归属判定",
+**加上检索时把当前账号传下去**(`knowledge_service.user_filter`)。
+
+仍然只有管理员的三件事(动的是全站共用资源):灌内置库 / 清库、查灌库任务、
+切 RAG 开关(进程级)。
+
+⚠️ 两个静默失效点:
+1. **未登录的检索必须排除 `uploaded` 层** —— `user_id=None` 的语义是"不过滤",
+   走那条路等于让任何人不用登录就搜到所有人上传的攻略全文。
+2. **`doc_id` 必须把上传者算进去**(`sha256(uploader + 正文)`),否则两个用户传
+   同一个文件会撞成同一条记录:后者被 `INSERT OR IGNORE` 静默忽略,
+   而且 Milvus 里的归属会被 upsert 覆盖成后传的人。
+
+**自助注册**是公开接口(`POST /api/auth/register`),它有三条写死的规矩:
+注册出来**只能是普通用户**(请求体里没有 `role`,接口也不读它)、注册即登录、
+只按 IP 节流(与登录分开计数)。想改成邀请制用 `TRIPMIND_ALLOW_REGISTRATION=false`。
+
+### 前端路由:落地页与应用是分开的
+
+```
+/           落地页(公开,meta.bare —— 不套应用外壳,自带营销导航)
+/register   注册(公开,bare)
+/login      登录(公开,bare)
+/app        规划首页(**需要登录**)
+/result /share  行程详情(公开 —— 分享链接必须能匿名打开)
+```
+
+⚠️ **`/` 是公开的落地页,不再是规划页。** 任何"把用户导回首页"的代码都要指向
+`/app` —— 否则刚登录完的人会被送回产品介绍页(这个错很容易犯,因为它长得像
+一个无害的 `router.push('/')`)。`/app` 这个信息在 `App.vue` 的导航里也要跟着改。
+
+落地页的样式**只读项目令牌**(`--brand-*` / `--text-*` / `--line-*` / `--radius-*`),
+不在 SFC 里另抄一份色值 —— 抄一份的话它和应用内页迟早会漂开。
+
+三个容易写错的地方:
+
+1. **401 与 403 不能混**。混了之后,普通用户点开知识库会被踹回登录页 ——
+   而他刚登录完,看起来就像"登录坏了"。前端对 401 的响应是清令牌 + 跳登录页,
+   对 403 只是弹一句提示。
+2. **`GET /api/trip/plans/{id}` 必须保持公开**。它是分享链接的数据源,
+   需登录的话收到链接的人会先撞到登录页,分享功能就是坏的。
+   归属字段(`owner_username`)只在管理员请求时返回 ——
+   分享出去的行程本来就是给不认识的人看的。
+3. **`GET /api/trip/plans` 的 `scope` 默认是 `mine`**。默认值必须是**最保守**的那个:
+   一个漏传参数的客户端(改版到一半的前端、老的调用脚本)会静默拿到全站数据,
+   而漏传参数恰恰是最常见的改动事故。
+
+`backend/tests/test_auth.py` 里有一份**端点权限金名单**,用真实路由表双向比对。
+它防的失效模式是:漏挂一个 `require_admin_role` → 那个接口对所有登录用户开放了,
+而**所有功能测试还是绿的**。
+
+老库迁移见 `app/store/db.py` 的 `_migrate()`。那里最要紧的一条:
+**索引必须建在 `ALTER TABLE` 之后** —— 写进 `SCHEMA` 会让老库启动时抛
+`no such column: user_id`,那是启动即失败,连登录页都打不开。
 
 ## 必须知道的坑
 

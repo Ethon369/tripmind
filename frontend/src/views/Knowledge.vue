@@ -18,9 +18,19 @@
         <p class="rag-off-text">
           生成行程时<strong>不会</strong>使用知识库 —— 现在上传的内容不会被用到。
         </p>
-        <a-button size="small" type="primary" :loading="toggling" @click="enableRag">
+        <!-- 开关是**进程级**的（影响所有人的生成），所以只有管理员能拨。
+             普通用户看到的是同一句状态说明 + 一个可执行的下一步，
+             而不是一个点了会被 403 的按钮。 -->
+        <a-button
+          v-if="isAdmin"
+          size="small"
+          type="primary"
+          :loading="toggling"
+          @click="enableRag"
+        >
           立即开启
         </a-button>
+        <span v-else class="rag-off-hint">需要管理员开启</span>
       </div>
       <div v-else-if="status?.enabled_source === 'runtime'" class="rag-runtime" role="status">
         知识库已开启（上传时自动打开的临时开关，重启后恢复 .env 里的设置）
@@ -53,7 +63,7 @@
          所以不是删掉,是收进折叠区:默认收起,展开即用。 -->
       <section class="kb-section">
         <a-collapse v-model:activeKey="advOpen" ghost class="adv">
-          <a-collapse-panel key="advanced" header="进阶：状态 · 检索调试 · 内置库维护">
+          <a-collapse-panel key="advanced" :header="advancedHeader">
             <div class="adv-body">
               <KnowledgeStatusBar
                 :status="status"
@@ -68,7 +78,10 @@
 
               <KnowledgeSearchPanel ref="searchPanelRef" @goto-ingest="openAdvanced" />
 
+              <!-- 灌内置库 / 清库 / 切开关都是**全站共用资源**上的操作，
+                   普通用户不该看到 —— 让一个人替所有人做决定不是"拥有知识库功能"。 -->
               <KnowledgeMaintenancePanel
+                v-if="isAdmin"
                 :status="status"
                 @finished="onMaintenanceFinished"
                 @try-search="onTrySearch"
@@ -91,7 +104,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from 'vue';
+import { computed, onMounted, ref } from 'vue';
 import { message } from 'ant-design-vue';
 import KnowledgeStatusBar from '@/components/knowledge/KnowledgeStatusBar.vue';
 import KnowledgeSearchPanel from '@/components/knowledge/KnowledgeSearchPanel.vue';
@@ -100,6 +113,7 @@ import KnowledgeHelpPanel from '@/components/knowledge/KnowledgeHelpPanel.vue';
 import KnowledgeUploadPanel from '@/components/knowledge/KnowledgeUploadPanel.vue';
 import KnowledgeDocList from '@/components/knowledge/KnowledgeDocList.vue';
 import { useKnowledgeStatus } from '@/composables/useKnowledgeStatus';
+import { useAuth } from '@/composables/useAuth';
 import {
   listKnowledgeDocs,
   toggleKnowledgeRag,
@@ -130,6 +144,19 @@ const { status, loading, error, countsError, loadingCounts, refresh, refreshCoun
 const helpOpen = ref(false);
 const toggling = ref(false);
 const advOpen = ref<string[]>([]);
+
+// 知识库现在是**每人一份**:上传与管理自己的攻略,所有人都有。
+// 仍然只有管理员的两件事(**全站共用资源**上的操作):
+//   · 灌内置库 / 清库(recreate 会 drop 掉所有人共用的 collection)
+//   · RAG 开关(进程级,拨一下影响所有人的行程生成)
+// 所以这里不是"整页锁管理员",而是**页内按角色隐藏那两个操作**。
+const { isAdmin } = useAuth();
+
+const advancedHeader = computed(() =>
+  isAdmin.value
+    ? '进阶：状态 · 检索调试 · 内置库维护'
+    : '进阶：状态 · 检索调试'
+);
 
 // ---- 上传的攻略列表 ----
 const docs = ref<KnowledgeDocSummary[]>([]);
@@ -249,6 +276,12 @@ onMounted(() => {
 
 .rag-off-text strong {
   color: #4b2a05;
+}
+
+.rag-off-hint {
+  font-size: var(--fs-caption);
+  color: var(--text-3);
+  white-space: nowrap;
 }
 
 .rag-runtime {

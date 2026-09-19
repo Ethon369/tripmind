@@ -1,8 +1,14 @@
 <template>
-  <a-layout class="app-shell">
+  <!-- bare 路由（落地页 / 登录 / 注册）不套应用外壳。
+       它们各自占据完整一屏，而且——更重要的——外壳导航里的
+       「历史行程」「知识库」「账号管理」都需要登录，给一个还没登录的人
+       看这些入口只会通向一串跳转。落地页有自己的营销导航。 -->
+  <router-view v-if="isBare" />
+
+  <a-layout v-else class="app-shell">
     <a-layout-header class="app-header">
       <div class="header-inner">
-        <router-link to="/" class="brand" aria-label="途灵 TripMind 首页">
+        <router-link to="/app" class="brand" aria-label="途灵 TripMind 规划台">
           <!-- 项目此前没有标识，用一只 emoji 顶着。这里补一个简洁的图形标：
                紫色渐变圆角方块 + 一条上升的路线。
                不承认真实品牌资产的场合，我宁可画一个中性的几何标，
@@ -29,28 +35,53 @@
         </router-link>
 
         <nav class="nav" aria-label="主导航">
-          <router-link v-for="item in NAV_ITEMS" :key="item.to" :to="item.to" class="nav-link">
+          <!-- 导航项按角色过滤。知识库基于**全站共用**的向量库，
+               普通用户既读不到自己的东西、也没有写权限，给他一个入口
+               只会通向"操作被拒"；账号管理更是只有管理员才有意义。
+               过滤是**界面层**的体贴，不是权限 —— 真正的判定在后端
+               每个端点上，直接敲 URL 也进不去（路由守卫 + 403）。 -->
+          <router-link v-for="item in navItems" :key="item.to" :to="item.to" class="nav-link">
             {{ item.label }}
           </router-link>
 
-          <!-- 管理口令的入口放在导航尾部，**全局只有一个**。
-               受保护的写操作分散在「历史行程」（改写/删除行程）和
-               「知识库」（灌库/删攻略/切开关）两个页面 —— 按页面各放一个，
-               会让人以为它们互不相干的两套东西。
-               样式上刻意不跟三个导航项一样做药丸底：它是"维护入口"，
-               不是第四个页面，视觉层级要低一档。 -->
-          <button
-            type="button"
-            class="admin-entry"
-            :class="{ 'is-set': adminTokenSet }"
-            :aria-label="adminTokenSet ? '管理口令（已设置）' : '管理口令（未设置）'"
-            @click="openTokenDialog"
-          >
-            <span>管理口令</span>
-            <!-- 已设置时点一个小绿点。不做成"已设置"三个字：
-                 它平时不需要被读到，只要"扫一眼知道有没有"就够了。 -->
-            <span v-if="adminTokenSet" class="admin-dot" aria-hidden="true"></span>
-          </button>
+          <!-- 账号区。
+               未登录时是一个「登录」按钮；已登录时是用户名 + 下拉菜单。
+               原来这里是一个「管理口令」弹窗入口 —— 那个模型下全站只有一个
+               身份，所以入口放在导航尾部、和三个页面平级是对的；
+               现在身份是"人"，它就该长得像一个账号入口。 -->
+          <template v-if="isAuthenticated">
+            <a-dropdown :trigger="['click']" placement="bottomRight">
+              <button type="button" class="account-entry" aria-label="账号菜单">
+                <span class="account-avatar" aria-hidden="true">{{ initial }}</span>
+                <span class="account-name">{{ displayName }}</span>
+                <!-- 角色徽标。用文字而不是只有颜色 —— 颜色单独承载信息
+                     对色觉障碍用户不可读，而"是不是管理员"是这里最要紧的一条。 -->
+                <span v-if="isAdmin" class="account-role">管理员</span>
+                <DownOutlined class="account-caret" />
+              </button>
+              <template #overlay>
+                <a-menu @click="onAccountMenu">
+                  <a-menu-item key="me" disabled>
+                    <span class="menu-username">{{ user?.username }}</span>
+                  </a-menu-item>
+                  <a-menu-divider />
+                  <a-menu-item v-if="isAdmin" key="users">
+                    <TeamOutlined /> 账号管理
+                  </a-menu-item>
+                  <a-menu-item key="password">
+                    <KeyOutlined /> 修改密码
+                  </a-menu-item>
+                  <a-menu-divider />
+                  <a-menu-item key="logout" danger>
+                    <LogoutOutlined /> 退出登录
+                  </a-menu-item>
+                </a-menu>
+              </template>
+            </a-dropdown>
+          </template>
+          <router-link v-else to="/login" class="account-entry is-guest">
+            登录
+          </router-link>
         </nav>
       </div>
     </a-layout-header>
@@ -70,105 +101,185 @@
     <a-layout-footer class="app-footer">
       <div class="footer-inner">
         <span class="footer-brand">途灵 TripMind</span>
-        <span>基于 HelloAgents 框架</span>
       </div>
     </a-layout-footer>
   </a-layout>
 
-  <!-- 管理口令弹窗。
-       放在 a-layout 外面：antd 的 Modal 默认 teleport 到 body，
-       留在 layout 里只是多一个不渲染的占位节点，反而干扰 flex 布局。 -->
-  <a-modal v-model:open="tokenOpen" title="管理口令" :width="460" :centered="true">
+  <!-- 修改密码弹窗。放在 a-layout 外面：antd 的 Modal 默认 teleport 到 body，
+       留在 layout 里只是多一个不渲染的占位节点，反而干扰 flex 布局。
+       只在有外壳时才有意义（入口在账号菜单里）—— bare 路由下整块不渲染。 -->
+  <a-modal
+    v-if="!isBare"
+    v-model:open="pwdOpen"
+    title="修改密码"
+    :width="460"
+    :centered="true"
+    :confirm-loading="pwdSaving"
+    ok-text="保存"
+    @ok="submitPassword"
+  >
     <p class="token-lead">
-      知识库的灌库与删除、RAG 开关，以及历史行程的改写与删除，都会改动数据。
-      这些接口需要一道共享口令，避免任何人打开网页就能误删资料。
+      修改成功后，你在<strong>其它设备上的登录会全部失效</strong>，
+      当前这台会继续使用（服务端会换发一个新令牌）。
     </p>
 
-    <a-input-password
-      v-model:value="tokenDraft"
-      placeholder="粘贴管理员分配的口令"
-      autocomplete="off"
-      allow-clear
-      @press-enter="saveToken"
-    />
-
-    <p class="token-foot">
-      口令只存在当前标签页，关掉浏览器即失效；不会写进磁盘，也不会出现在网址里。
-      生成行程、检索、查看历史这些读操作不需要口令。
-    </p>
-
-    <template #footer>
-      <a-button v-if="adminTokenSet" class="token-clear" danger type="text" @click="clearToken">
-        清除口令
-      </a-button>
-      <a-button @click="tokenOpen = false">取消</a-button>
-      <a-button type="primary" @click="saveToken">保存</a-button>
-    </template>
+    <a-form layout="vertical">
+      <a-form-item label="当前密码">
+        <a-input-password
+          v-model:value="pwdForm.oldPassword"
+          placeholder="请输入当前密码"
+          autocomplete="current-password"
+        />
+      </a-form-item>
+      <a-form-item label="新密码">
+        <a-input-password
+          v-model:value="pwdForm.newPassword"
+          placeholder="至少 6 位；不能与用户名相同"
+          autocomplete="new-password"
+        />
+      </a-form-item>
+      <a-form-item label="确认新密码">
+        <a-input-password
+          v-model:value="pwdForm.confirm"
+          placeholder="再输一次"
+          autocomplete="new-password"
+        />
+      </a-form-item>
+    </a-form>
   </a-modal>
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue';
-import { message } from 'ant-design-vue';
-import { getAdminToken, hasAdminToken, setAdminToken } from '@/services/api';
+import { computed, onMounted, reactive, ref } from 'vue';
+import { useRoute, useRouter } from 'vue-router';
+import { Modal, message } from 'ant-design-vue';
+import {
+  DownOutlined,
+  KeyOutlined,
+  LogoutOutlined,
+  TeamOutlined
+} from '@ant-design/icons-vue';
+import { useAuth } from '@/composables/useAuth';
+import { changePassword, logout, setToken } from '@/services/api';
+
+/**
+ * 应用外壳：顶栏 + 内容区 + 页脚 + 账号菜单。
+ *
+ * 顶栏的「管理口令」入口在账号体系上线后换成了**账号入口** —— 那不是换个皮：
+ * 管理口令模型下全站只有一个身份（"知道口令的人"），所以那个入口只是一个
+ * 设置开关；账号模型下身份是具体的人，而且有一组和它相关的动作
+ * （看自己是谁、改密码、管理账号、退出），那是一个菜单。
+ *
+ * 角色徽标是这里唯一新增的"信息展示"：管理员和普通用户看到的导航项不一样，
+ * 不给一个明确的标记，用户会以为"我的知识库入口不见了"。
+ */
+
+const router = useRouter();
+const route = useRoute();
+
+/** 不套外壳的路由（落地页 / 登录 / 注册）。见模板顶部的说明。 */
+const isBare = computed(() => route.meta.bare === true);
+
+// 账号状态。放在顶部的理由是模板里到处要用（角色徽标、账号菜单），
+// 写在前面省得读的时候还要往下找。
+const { user, isAuthenticated, isAdmin, displayName, signOut, refresh } = useAuth();
 
 /**
  * 导航项。
  *
  * 保持无图标：三项文字导航已足够清晰，
  * 而这套视觉的轻盈感来自留白和色彩，不来自图标堆叠。
- */
-const NAV_ITEMS = [
-  { to: '/', label: '首页' },
-  { to: '/history', label: '历史行程' },
-  { to: '/knowledge', label: '知识库' },
-] as const;
-
-// ---------------- 管理口令 ----------------
-//
-// 背景见 services/api.ts 里「管理口令」那一段：后端的写接口加了一道共享口令，
-// 前端负责把它带上。这里只做一件事 —— 提供一个让用户填口令的地方。
-
-/**
- * 是否已设置口令。
  *
- * hasAdminToken() 读的是 sessionStorage，那不是响应式数据源，
- * 所以用一个 ref 镜像它。写入点只有下面两个函数，
- * 不存在"别处改了它、这里不知道"的情况。
- * sessionStorage 是每个标签页独立的，也不需要监听 storage 事件。
+ * ⚠️ 「首页」指向 `/app`（规划页）而不是 `/`：落地页是**对外**的门面，
+ *    已经登录的人点"首页"想看到的是自己的规划台，不是又一遍产品介绍。
+ *    知识库那一项按角色过滤 —— 理由见模板里的注释。
  */
-const adminTokenSet = ref(hasAdminToken());
-const tokenOpen = ref(false);
-const tokenDraft = ref('');
+const navItems = computed(() => {
+  const items = [
+    { to: '/app', label: '规划行程' },
+    { to: '/history', label: '历史行程' },
+    // 知识库对**所有登录用户**开放(每人管自己的攻略)。
+    // 页内仍按角色隐藏"灌内置库 / 切 RAG 开关"那两个管理员操作。
+    { to: '/knowledge', label: '知识库' }
+  ];
+  return items;
+});
 
-function openTokenDialog() {
-  // 打开时回填：用户点进来多半是想改，先让他看见当前是什么。
-  // input-password 默认打码，需要核对时点右侧小眼睛展开。
-  tokenDraft.value = getAdminToken();
-  tokenOpen.value = true;
+// ---------------- 账号 ----------------
+
+/** 头像位置显示用户名首字母。中文名取第一个字也是合理的。 */
+const initial = computed(() => (displayName.value || '?').trim().charAt(0).toUpperCase());
+
+// 启动时向服务端核对一次登录态。
+// 本地缓存已经让顶栏渲染出用户名了，这一步是为了纠正"令牌已失效但缓存还在"。
+// 失败不提示 —— 用户会直接看到界面变成未登录，那本身就是提示。
+onMounted(() => {
+  void refresh();
+});
+
+function onAccountMenu(e: unknown) {
+  const key = typeof e === 'object' && e !== null ? String((e as { key?: unknown }).key ?? '') : '';
+  if (key === 'users') return void router.push('/users');
+  if (key === 'password') return openPasswordDialog();
+  if (key === 'logout') return confirmLogout();
 }
 
-function saveToken() {
-  const had = adminTokenSet.value;
-  // 传空串等于清除 —— 所以"不填直接点保存"不会留下一个空口令，
-  // 而是显式地清掉，语义上没有歧义。
-  setAdminToken(tokenDraft.value);
-  adminTokenSet.value = hasAdminToken();
-  tokenOpen.value = false;
+function confirmLogout() {
+  Modal.confirm({
+    title: '退出登录？',
+    content: '退出后需要重新输入用户名和密码才能生成或查看自己的行程。',
+    okText: '退出',
+    cancelText: '取消',
+    onOk: async () => {
+      // logout() 内部已经保证"服务端失败也清本地"（见 api.ts）。
+      await logout();
+      signOut();
+      message.success('已退出登录');
+      // 回到首页 —— 它是需要登录的页面，守卫会把用户引到登录页。
+      // 不直接 push('/login')：留着当前页（比如某个行程详情）让他
+      // 能继续看完，而需要权限的动作届时会引导他登录。
+      await router.push('/');
+    }
+  });
+}
 
-  if (!adminTokenSet.value) {
-    message.info(had ? '已清除管理口令，写操作将无法进行' : '口令为空，未做改动');
-  } else {
-    message.success(had ? '管理口令已更新' : '管理口令已保存');
+// ---------------- 修改密码 ----------------
+
+const pwdOpen = ref(false);
+const pwdSaving = ref(false);
+const pwdForm = reactive({ oldPassword: '', newPassword: '', confirm: '' });
+
+function openPasswordDialog() {
+  pwdForm.oldPassword = '';
+  pwdForm.newPassword = '';
+  pwdForm.confirm = '';
+  pwdOpen.value = true;
+}
+
+async function submitPassword() {
+  if (!pwdForm.oldPassword || !pwdForm.newPassword) {
+    message.warning('请填写当前密码和新密码');
+    return;
   }
-}
+  if (pwdForm.newPassword !== pwdForm.confirm) {
+    message.warning('两次输入的新密码不一致');
+    return;
+  }
 
-function clearToken() {
-  setAdminToken('');
-  adminTokenSet.value = false;
-  tokenDraft.value = '';
-  tokenOpen.value = false;
-  message.info('已清除管理口令，写操作将无法进行');
+  pwdSaving.value = true;
+  try {
+    const res = await changePassword(pwdForm.oldPassword, pwdForm.newPassword);
+    // **必须写回新令牌**：服务端改密码时吊销了全部会话（包括当前这个），
+    // 不写回的话用户改完自己的密码立刻变成未登录 —— 会被理解成
+    // "改密码把账号弄坏了"。
+    if (res.token) setToken(res.token);
+    pwdOpen.value = false;
+    message.success(res.message || '密码已修改');
+  } catch (e: unknown) {
+    message.error((e as Error)?.message || '修改密码失败');
+  } finally {
+    pwdSaving.value = false;
+  }
 }
 </script>
 
@@ -279,88 +390,103 @@ function clearToken() {
   font-weight: var(--fw-semibold);
 }
 
-/* ---------------- 管理口令入口 ----------------
- * 从属于导航，但视觉层级比三个页面低一档：它是「维护入口」，不是第四个页面。
- * 用 button 而不是 router-link —— 它打开弹窗，不切换路由。
+/* ---------------- 账号入口 ----------------
+ * 从属于导航，但视觉上比三个页面低一档：它不是一个页面，是一组
+ * 和"我"相关的动作。所以用带底色的轻按钮，而不是导航项那种药丸高亮。
  */
-.admin-entry {
+.account-entry {
   display: inline-flex;
   align-items: center;
   gap: var(--space-2);
   min-height: 36px;
-  /* 和第三个导航项之间留出距离，再由 ::before 画一条竖线：
+  /* 和最后一个导航项之间留出距离，再由 ::before 画一条竖线：
      "从这里开始是另一种入口"。 */
   margin-left: var(--space-3);
-  padding: 0 var(--space-4);
+  padding: 0 var(--space-3) 0 var(--space-1);
   border: 0;
   border-radius: var(--radius-pill);
   background: transparent;
   font-family: inherit;
   font-size: var(--fs-caption);
   font-weight: var(--fw-medium);
-  color: var(--text-3);
+  color: var(--text-2);
   cursor: pointer;
   white-space: nowrap;
+  text-decoration: none;
   transition: color var(--dur-fast) var(--ease-out),
     background-color var(--dur-fast) var(--ease-out);
 }
 
 /* 竖分隔线用伪元素而不是 border-left：圆角药丸配上左侧 border，
    悬停变底色时左边缘会出现一个直角缺口。 */
-.admin-entry::before {
+.account-entry::before {
   content: '';
   width: 1px;
   height: 16px;
   background: var(--line-1);
+  margin-right: var(--space-2);
 }
 
-.admin-entry:hover {
+.account-entry:hover {
   color: var(--text-1);
   background: var(--bg-sunken);
 }
 
-/* 已设置口令时变成品牌色 + 一个绿点。改色是因为
-   "写操作现在可用"是个值得一眼看到的状态。 */
-.admin-entry.is-set {
-  color: var(--brand-600);
-}
-
-.admin-entry.is-set:hover {
-  background: var(--brand-50);
-}
-
-.admin-dot {
-  width: 6px;
-  height: 6px;
+/* 首字母头像。比图标更省事，也比空白更能让人一眼认出"这是账号区"。 */
+.account-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
   border-radius: 50%;
-  background: var(--success);
+  background: var(--brand-gradient);
+  color: #fff;
+  font-size: var(--fs-micro);
+  font-weight: var(--fw-semibold);
   flex-shrink: 0;
 }
 
-/* ---------------- 管理口令弹窗 ---------------- */
-.token-lead,
-.token-foot {
-  margin: 0;
-  font-size: var(--fs-caption);
-  line-height: var(--lh-body);
-  color: var(--text-2);
+.account-name {
+  max-width: 10ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-.token-lead {
-  margin-bottom: var(--space-4);
+/* 角色徽标。**文字 + 颜色**两重表达：只靠颜色区分对色觉障碍用户不可读，
+   而"我是不是管理员"恰恰是这里最要紧的一条信息。 */
+.account-role {
+  padding: 0 6px;
+  border-radius: var(--radius-pill);
+  background: var(--brand-50);
+  color: var(--brand-600);
+  font-size: var(--fs-micro);
+  line-height: 16px;
 }
 
-.token-foot {
-  margin-top: var(--space-4);
+.account-caret {
+  font-size: 10px;
   color: var(--text-3);
 }
 
-/* 「清除口令」推到左侧，和右侧的取消/保存分开 —— 它是破坏性操作，
-   不该和「保存」并排站在一起。
-   antd 的 modal footer 是 text-align:end 而不是 flex，所以用 float；
-   这个类挂在自己渲染的按钮上，scoped 样式能命中。 */
-.token-clear {
-  float: left;
+/* 未登录时的「登录」是一个链接，需要把伪元素分隔线保留住，
+   同时去掉按钮的默认样式差异。 */
+.account-entry.is-guest {
+  padding: 0 var(--space-4) 0 var(--space-1);
+  color: var(--brand-600);
+}
+
+.menu-username {
+  font-weight: var(--fw-semibold);
+  color: var(--text-1);
+}
+
+/* ---------------- 修改密码弹窗 ---------------- */
+.token-lead {
+  margin: 0 0 var(--space-4);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-body);
+  color: var(--text-2);
 }
 
 /* ---------------- 内容 ---------------- */
@@ -417,9 +543,9 @@ function clearToken() {
   }
 
   /* 窄屏只留图形标，隐藏「途灵 TripMind」文字。
-     顶栏是 brand + 三个导航项 + 管理口令入口的单行布局，
+     顶栏是 brand + 导航项 + 账号入口的单行布局，
      这些文字在 375px 宽的手机上放不下 —— 实测宽度会超出视口，
-     表现是整条顶栏被挤爆（这一条在加管理口令入口之前就已经临界了）。
+     表现是整条顶栏被挤爆（这一条在加账号入口之前就已经临界了）。
      图形标 + 页面标题已经足够表明身份。 */
   .brand-name {
     display: none;
@@ -435,10 +561,23 @@ function clearToken() {
     font-size: var(--fs-caption);
   }
 
-  .admin-entry {
+  .account-entry {
     min-height: var(--touch-min);
     margin-left: var(--space-2);
-    padding: 0 var(--space-2);
+    padding: 0 var(--space-2) 0 0;
+  }
+
+  .account-entry::before {
+    margin-right: var(--space-2);
+  }
+
+  /* 手机上只留头像和角色点 —— 用户名和「管理员」文字放不下。
+     角色信息没丢：管理员的下拉菜单里第一项就是「账号管理」，
+     而且导航项本身也按角色变了。 */
+  .account-name,
+  .account-role,
+  .account-caret {
+    display: none;
   }
 
   .app-content {

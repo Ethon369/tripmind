@@ -286,6 +286,47 @@ _CONTEXT_HEADER = (
 )
 
 
+def user_filter(namespace: str, user_id: str | None) -> str | None:
+    """给某一层拼「按人隔离」的 Milvus 过滤表达式。
+
+    规则只有一条,但很容易写错方向:
+
+        **只有 `uploaded` 层按人过滤;内置两层是全站共享的公共知识。**
+
+    `poi_facts`(POI 库存)与 `city_guides`(内置城市攻略)是**所有人共用的
+    同一份事实** —— 给它们加 `user_id == "xxx"` 会让检索**一条都匹配不到**
+    (那些行里根本没有这个字段),而且失败是静默的:检索异常被吞成空列表,
+    表现为"知识库明明灌过库,生成行程时却完全没参考"。
+
+    Args:
+        namespace: 层名。
+        user_id: 当前账号;None 表示不过滤(管理员 / 命令行脚本 / 未登录的公开检索)。
+
+    Returns:
+        可直接传给 Milvus 的 `filter` 表达式,或 None(不过滤)。
+    """
+    if user_id is None or namespace != "uploaded":
+        return None
+
+    owner = str(user_id).strip()
+
+    # ⚠️ **空账号绝不能退化成"不过滤"。**
+    #    `None` 在这个函数里的语义是"不过滤"(管理员视角),如果空串也走那条路,
+    #    一个空账号就能把**全站所有人上传的攻略**都搜出来 —— 静默地。
+    #    所以这里给一个**永远匹配不到**的条件:账号 id 是 uuid4().hex,
+    #    不可能等于这个哨兵值,于是检索结果为空(正确且安全)。
+    if not owner:
+        return 'user_id == "__no_owner__"'
+
+    # 账号 id 是我们自己生成的 uuid4().hex,理论上永远是 [0-9a-f]{32}。
+    # 但这是**唯一一处把变量拼进查询表达式**的地方,而拒绝一个非法值的成本
+    # 是零、漏掉它的成本是"用户可控字符串进了表达式"。所以显式校验。
+    if not all(c.isalnum() or c in "_-" for c in owner):
+        raise ValueError(f"账号 id 含非法字符,拒绝拼进过滤表达式: {owner[:32]!r}")
+
+    return f'user_id == "{owner}"'
+
+
 def format_context(hits: Sequence["KnowledgeHit"]) -> str:
     """把检索结果拼成**带出处**的引用块,直接放进 planner 的 prompt。
 
@@ -475,7 +516,9 @@ class MilvusKnowledgeStore:
         self.flush()
         return deleted
 
-    def search(self, vector: list[float], top_k: int) -> list[dict]:
+    def search(
+        self, vector: list[float], top_k: int, filter_expr: str | None = None
+    ) -> list[dict]:
         """检索。**collection 还没建时返回空列表,不抛异常。**
 
         与 `count()` / `delete()` 一样先查 `exists()` —— 这一点不是可有可无的:
@@ -487,6 +530,14 @@ class MilvusKnowledgeStore:
         —— 于是三个层里只要有一层是空的,每次检索、每次行程生成都会刷一条
         「检索失败(uploaded)」,检索接口还会返回 `partial: true`。
         真正出故障时反而没人注意到那条告警了。
+
+        Args:
+            filter_expr: Milvus 过滤表达式(如 `user_id == "abc"`),None = 不过滤。
+                `uploaded` 层靠它做**按人隔离** —— 见 `KnowledgeService._user_filter`。
+                `user_id` 是**动态字段**(collection 建的时候开了
+                `enable_dynamic_field=True`),所以加它不需要改 schema,
+                也不需要重建已有的 collection。改动前入库的老数据没有这个字段,
+                表达式不会匹配到它们 —— 正好是想要的("无主"只对管理员可见)。
         """
         if not self.exists():
             return []
@@ -495,11 +546,16 @@ class MilvusKnowledgeStore:
         #    code=101。详见 `_ensure_loaded()`。
         self._ensure_loaded()
 
+        kwargs: dict[str, Any] = {}
+        if filter_expr:
+            kwargs["filter"] = filter_expr
+
         hits = self.client.search(
             self.collection,
             data=[vector],
             limit=top_k,
             output_fields=["text", "source", "heading_path"],
+            **kwargs,
         )
         out: list[dict] = []
         for h in (hits[0] if hits else []):
@@ -663,10 +719,23 @@ class KnowledgeService:
 
     # ---------------- 检索 ----------------
 
-    def retrieve(self, query: str, namespace: str, top_k: int | None = None) -> list[KnowledgeHit]:
+    def retrieve(
+        self, query: str, namespace: str, top_k: int | None = None, user_id: str | None = None
+    ) -> list[KnowledgeHit]:
         """检索某一层。**任何异常都吞掉并返回空列表。**
 
         RAG 是增强不是依赖 —— 向量库连不上时,行程照样得能生成。
+
+        Args:
+            user_id: 当前账号。**只对 `uploaded` 层生效**:别人上传的攻略
+                不该出现在你的行程里。内置两层(poi_facts / city_guides)
+                是全站共享的公共知识,不受这个参数影响。
+                None = 不过滤(管理员视角、或命令行脚本)。
+
+        ⚠️ 为什么过滤条件**只加在 uploaded 层**,而不是无条件加在三层上:
+           内置两层的行里根本没有 user_id 这个字段,而"字段不存在"与
+           "字段等于空串"在过滤表达式里的行为不一样 —— 无条件加条件会让
+           内置层**一条都检索不到**,而且是静默的(检索失败被吞成空列表)。
         """
         query = (query or "").strip()
         if not query:
@@ -675,7 +744,7 @@ class KnowledgeService:
         try:
             store = self.store(namespace)
             vector = self.encode(query)[0]
-            rows = store.search(vector, top_k=k)
+            rows = store.search(vector, top_k=k, filter_expr=user_filter(namespace, user_id))
         except Exception as exc:
             self.last_error = f"检索失败({namespace}): {type(exc).__name__}: {exc}"
             print(f"⚠️  {self.last_error} —— 本次跳过知识库,不影响行程生成")
@@ -692,7 +761,13 @@ class KnowledgeService:
             for r in rows
         ]
 
-    def _retrieve_all_layers(self, query: str, k: int) -> list[KnowledgeHit]:
+    def _retrieve_all_layers(
+        self,
+        query: str,
+        k: int,
+        user_id: str | None = None,
+        namespaces: Sequence[str] | None = None,
+    ) -> list[KnowledgeHit]:
         """三层一起检索后按分数归并。
 
         抽成私有方法是因为归并逻辑出现了两次(planner 与调试台) ——
@@ -703,14 +778,22 @@ class KnowledgeService:
         `retrieve_for_request` 给 planner 用,不截 —— 多几条参考资料没有坏处;
         `retrieve_merged` 给调试台,必须截到 k,否则接口返回的条数
         是调用方要求的三倍。
+
+        `user_id` 透传给 `retrieve`,只有 `uploaded` 层会用到它(按人隔离)。
+
+        `namespaces` 默认全部三层。**未登录的检索必须显式排掉 `uploaded`**:
+        那种情况下 `user_id` 是 None(不过滤),不排掉会把**所有人上传的攻略**
+        都搜出来 —— 按人隔离就白做了。详见 `routes/knowledge.py::knowledge_search`。
         """
         hits: list[KnowledgeHit] = []
-        for ns in self.ALL_NAMESPACES:
-            hits.extend(self.retrieve(query, ns, k))
+        for ns in (namespaces or self.ALL_NAMESPACES):
+            hits.extend(self.retrieve(query, ns, k, user_id=user_id))
         hits.sort(key=lambda h: h.score, reverse=True)
         return hits
 
-    def retrieve_for_request(self, request: Any, top_k: int | None = None) -> list[KnowledgeHit]:
+    def retrieve_for_request(
+        self, request: Any, top_k: int | None = None, user_id: str | None = None
+    ) -> list[KnowledgeHit]:
         """三层一起检索,按分数归并。
 
         三层用**同一个 embedder、同一个度量(COSINE)**,所以分数**可以直接比**。
@@ -719,9 +802,15 @@ class KnowledgeService:
         """
         k = int(top_k or self.settings.rag_top_k)
         query = build_retrieval_query(request)
-        return self._retrieve_all_layers(query, k)
+        return self._retrieve_all_layers(query, k, user_id=user_id)
 
-    def retrieve_merged(self, query: str, top_k: int | None = None) -> list[KnowledgeHit]:
+    def retrieve_merged(
+        self,
+        query: str,
+        top_k: int | None = None,
+        user_id: str | None = None,
+        namespaces: Sequence[str] | None = None,
+    ) -> list[KnowledgeHit]:
         """三层一起检索,归并后返回**最多 top_k 条**。
 
         与 `retrieve_for_request` 的区别:那个接受 TripRequest、用
@@ -733,9 +822,12 @@ class KnowledgeService:
 
         ⚠️ `top_k` 的语义是「**返回**多少条」,不是「每层取多少条」。
         三层各自取 k 条再归并,必须截断到 k —— 详见 `_retrieve_all_layers`。
+
+        ⚠️ 调试台也要带 `user_id`:不带的话,任何登录用户都能在检索框里
+        搜到**别人上传的攻略全文**,按人隔离就白做了。
         """
         k = int(top_k or self.settings.rag_top_k)
-        return self._retrieve_all_layers(query, k)[:k]
+        return self._retrieve_all_layers(query, k, user_id=user_id, namespaces=namespaces)[:k]
 
     def build_context(self, request: Any, top_k: int | None = None) -> str:
         """给 planner 用的、可直接拼进 prompt 的引用块。检索不到时返回空串。"""
@@ -955,6 +1047,7 @@ class KnowledgeService:
         doc_id: str,
         title: str,
         chunks: list[tuple[str, str]],
+        user_id: str | None = None,
         progress_cb: Any = None,
     ) -> dict:
         """把一篇用户上传的攻略灌进 `uploaded` 层。
@@ -965,11 +1058,21 @@ class KnowledgeService:
         两种生命周期硬塞进一个方法,迟早会互相踩。
 
         chunk 主键 `upload:{doc_id}:{idx}`:
-        doc_id 由正文哈希得来,所以同一份内容重传时 id 完全一致,
-        upsert 直接覆盖 —— 这就是为什么重复上传不会在库里越堆越多。
+        doc_id 由(上传者 + 正文)哈希得来(见 `routes/knowledge.py`),
+        所以**同一个人**重传同一份内容时 id 完全一致,upsert 直接覆盖 ——
+        这就是为什么重复上传不会在库里越堆越多。
+
+        Args:
+            user_id: 上传者。写进每一行的**动态字段**,检索时靠它做按人隔离。
+                不传 / 为空表示"无主"(账号体系上线前那批),只有管理员检索得到。
         """
         store = self.store(self.NAMESPACE_UPLOAD)
         store.ensure_collection()
+
+        # 只允许我们自己生成的 id 进过滤表达式。user_id 来自登录令牌里的账号 id
+        # (uuid4().hex),理论上永远是安全的;但这里多一道校验是**免费**的,
+        # 而漏了它的代价是把用户可控的字符串拼进 Milvus 表达式。
+        owner = str(user_id or "")
 
         texts: list[str] = []
         metas: list[dict] = []
@@ -991,6 +1094,10 @@ class KnowledgeService:
                 # 不是「download(3).md」。
                 "source": title,
                 "heading_path": meta["heading_path"],
+                # 动态字段:collection 开了 enable_dynamic_field,不用改 schema。
+                # 空串表示无主 —— **不要写 None**,Milvus 对 null 的处理
+                # 和"字段不存在"不一样,过滤表达式的行为会变得难预测。
+                "user_id": owner,
             }
             for vec, txt, meta in zip(vectors, texts, metas)
         ]

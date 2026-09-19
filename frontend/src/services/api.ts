@@ -5,6 +5,7 @@ import type {
   TripPlanResponse,
   PlanListResponse,
   PlanDetailResponse,
+  PlanScope,
   KnowledgeStatus,
   KnowledgeSearchRequest,
   KnowledgeSearchResponse,
@@ -15,7 +16,13 @@ import type {
   KnowledgeDocParse,
   KnowledgeDocListResponse,
   KnowledgeDocDetail,
-  KnowledgeRagToggle
+  KnowledgeRagToggle,
+  AuthUser,
+  LoginResponse,
+  MeResponse,
+  ChangePasswordResponse,
+  UserListResponse,
+  UserRole
 } from '@/types'
 import { STORAGE_KEYS } from '@/constants/storage'
 
@@ -57,132 +64,134 @@ export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
  */
 const TRIP_PLAN_TIMEOUT_MS = 300000 // 5 分钟
 
-// ============ 管理口令 ============
+// ============ 登录态 ============
 //
-// 背景：这个站点部署在公网上，而后端有若干**会改数据**的接口
-// （灌库、删除上传的攻略、切换 RAG 开关、改写/删除行程）。
-// 原来它们全都没有任何校验 —— 任何知道 URL 的人都能删掉知识库里的资料。
+// 这一整块取代了原来的「管理口令」。两者的形状差别很大，值得说清楚：
 //
-// 完整的用户体系对这个项目是过重的（没有账号需求、没有多租户），
-// 所以后端加了一道共享口令：受保护的接口要求请求头 `X-Admin-Token`
-// 等于环境变量 TRIPMIND_ADMIN_TOKEN 的值。前端这边负责
-// **在正确的请求上附上它**，以及在它不对时说清楚怎么办。
+//   旧：一个共享口令，前端维护一张「哪些请求要附口令」的清单
+//       （ADMIN_GUARDED），只在写接口上带 `X-Admin-Token`。
+//   新：一个按人签发的会话令牌，**每个请求都带** `Authorization: Bearer`，
+//       因为服务端需要知道"你是谁"才能判断"这条数据你能不能看"。
+//
+// 所以那张清单**整个消失了** —— 不是被简化，而是不再需要。这也是为什么
+// 原来的 `test_admin_token_contract.py`（校验前后端两份清单逐条对上）
+// 没有对应的新测试：它防的那个失效模式在新设计里不存在。
 
 /**
- * 需要附管理口令的请求。**只列这些，不是全部** —— 三个理由：
+ * 当前登录令牌。读取点收敛在这里，组件不直接碰存储。
  *
- * 1. **最小暴露**。口令没必要跟着每一次读请求走（读接口本来就是公开的），
- *    带上只会让它出现在更多地方的日志里。
- * 2. **避免无谓的 CORS 预检**。自定义头会让浏览器先发 OPTIONS。
- *    生产环境前后端同源无所谓，但如果有人把 VITE_API_BASE_URL
- *    指向别的域名调试，全量附带会让**所有**请求都多一次往返，
- *    包括首页那张照片。
- * 3. **这份清单要和后端逐条对上**。所以它写得像后端路由表一样直白：
- *    `[方法, 路径正则]`。后端同名单在
- *    `backend/app/api/routes/knowledge.py` 与 `trip.py` 里靠
- *    `dependencies=[Depends(require_admin)]` 实现；
- *    `backend/tests/test_admin_auth.py` 用一份"必须受保护"的名单
- *    反向校验后端没有漏挂 —— 这边改动时也要同步核对那份测试。
- *
- * 故意**不**受保护的（读接口，公开）：
- *   GET  /api/knowledge/status     页面首屏要显示状态
- *   POST /api/knowledge/search     检索不写数据
- *   POST /api/knowledge/ingest/preview   只做切块预览，不落库
- *   GET  /api/knowledge/sources
- *   GET  /api/trip/plans           历史列表
- *   GET  /api/trip/plans/{id}      分享链接要能匿名打开
- *   POST /api/trip/plan            生成行程（写库，但产品功能，见后端注释）
- *   POST /api/trip/parse
+ * 存储读写在隐私模式/被策略禁用时会抛异常，所以必须包 try ——
+ * 读不到就当没登录，让请求按未登录走，后端回 401，用户看到的是登录页
+ * 而不是一个白屏。为一个存储异常把整页打挂是不划算的。
  */
-const ADMIN_GUARDED: ReadonlyArray<readonly [method: string, pattern: RegExp]> = [
-  // 知识库：写入与文档管理
-  ['POST', /^\/api\/knowledge\/ingest$/], // 提交灌库任务
-  ['GET', /^\/api\/knowledge\/ingest\/[^/]+$/], // 轮询灌库进度
-  ['POST', /^\/api\/knowledge\/docs\/parse$/], // 解析上传的攻略
-  ['POST', /^\/api\/knowledge\/docs\/[^/]+\/ingest$/], // 把攻略灌进向量库
-  ['GET', /^\/api\/knowledge\/docs$/], // 攻略列表
-  ['GET', /^\/api\/knowledge\/docs\/[^/]+$/], // 攻略详情（含全文分块）
-  ['DELETE', /^\/api\/knowledge\/docs\/[^/]+$/], // 删除攻略
-  ['POST', /^\/api\/knowledge\/rag-toggle$/], // 运行时开关 RAG
-  // 行程：改写与删除（创建和读取保持公开）
-  ['PUT', /^\/api\/trip\/plans\/[^/]+$/],
-  ['DELETE', /^\/api\/trip\/plans\/[^/]+$/],
-]
-
-/** 这个请求是否需要管理口令。method/url 来自 axios config 或手写常量 */
-export function needsAdminToken(method: string | undefined, url: string | undefined): boolean {
-  if (!method || !url) return false
-  // 去掉 query。上面这些接口目前都不用 query，但 config.url 将来可能被
-  // 拼接上参数，不处理的话正则结尾的 `$` 会突然匹配不上 —— 那种失效是静默的。
-  const path = url.split('?')[0]
-  const upper = method.toUpperCase()
-  return ADMIN_GUARDED.some(([m, re]) => m === upper && re.test(path))
-}
-
-/**
- * 读口令。sessionStorage 在隐私模式/被策略禁用时会直接抛异常，
- * 所以必须包 try —— 读不到就当没设置，让请求按"没带口令"走，
- * 后端会回 401/503，用户能看到可读的提示。
- * 让整个页面崩在一个存储异常上是不划算的。
- */
-export function getAdminToken(): string {
+export function getToken(): string {
   try {
-    return sessionStorage.getItem(STORAGE_KEYS.ADMIN_TOKEN) || ''
+    return localStorage.getItem(STORAGE_KEYS.AUTH_TOKEN) || ''
   } catch {
     return ''
   }
 }
 
-/** 写口令。传空串等于清除 */
-export function setAdminToken(token: string): void {
-  const value = token.trim()
+/** 写令牌。传空串等于清除。 */
+export function setToken(token: string): void {
+  const value = (token || '').trim()
   try {
-    if (value) sessionStorage.setItem(STORAGE_KEYS.ADMIN_TOKEN, value)
-    else sessionStorage.removeItem(STORAGE_KEYS.ADMIN_TOKEN)
+    if (value) localStorage.setItem(STORAGE_KEYS.AUTH_TOKEN, value)
+    else localStorage.removeItem(STORAGE_KEYS.AUTH_TOKEN)
   } catch {
-    /* 存储不可用时忽略：本次会话内写操作会失败，但页面其它功能正常 */
+    /* 存储不可用时忽略：本次会话内的请求会按未登录发出，后端会回 401 */
   }
 }
 
-/** 当前是否有口令（给顶栏显示状态用） */
-export function hasAdminToken(): boolean {
-  return getAdminToken() !== ''
+export function clearToken(): void {
+  setToken('')
+}
+
+export function hasToken(): boolean {
+  return getToken() !== ''
 }
 
 /**
- * 构造附加口令的请求头。给绕过 axios 的 fetch 调用用
+ * 未授权（401）的**全局**回调。
+ *
+ * 为什么用回调而不是在拦截器里直接 `router.push('/login')`：
+ * api.ts 是纯服务层，import 路由实例会让它和 Vue 应用强耦合 ——
+ * 那样这个文件就没法在测试或脚本里单独用了。注册点放在 `main.ts`。
+ *
+ * 为什么"过期"要走全局：令牌过期（或账号被停用）会让**任何一个**
+ * 请求 401。如果每个调用点各自处理，就会出现"六个组件各自弹一次
+ * 登录已过期"的情形。统一在一处处理 = 清掉失效令牌 + 跳一次登录页。
+ */
+type UnauthorizedHandler = () => void
+
+let onUnauthorized: UnauthorizedHandler | null = null
+
+export function setUnauthorizedHandler(handler: UnauthorizedHandler | null): void {
+  onUnauthorized = handler
+}
+
+/**
+ * 这个 401 是不是"登录态失效"。
+ *
+ * **登录接口自己被拒不算** —— 那是"密码输错了"，不是"会话过期了"。
+ * 不排除它的话，用户第一次输错密码就会被跳转到登录页（他本来就在登录页），
+ * 并且那一瞬间本地令牌会被清掉 —— 表现是"输错一次密码页面闪一下"，
+ * 而真正的错误提示被这次跳转冲掉。
+ */
+function isSessionExpiry(url: string | undefined): boolean {
+  const path = (url || '').split('?')[0]
+  return !path.endsWith('/api/auth/login')
+}
+
+/**
+ * 已登录账号的本地缓存（只用于**首屏渲染**）。
+ *
+ * 存它是为了让顶栏在 `/api/auth/me` 返回之前就能显示用户名 ——
+ * 否则每次刷新页面，右上角都会先空一下再跳出来。
+ *
+ * ⚠️ 它**不是**权限依据。界面要不要显示「账号管理」入口看的是它，
+ * 但那只影响"显示了不该显示的按钮"（点了会被后端 403 挡住）。
+ * 真正的判定始终在服务端 —— 本地缓存被改也拿不到任何数据。
+ */
+const USER_KEY = 'tripmindAuthUser'
+
+export function readCachedUser(): AuthUser | null {
+  try {
+    const raw = localStorage.getItem(USER_KEY)
+    if (!raw) return null
+    const parsed: unknown = JSON.parse(raw)
+    if (typeof parsed !== 'object' || parsed === null) return null
+    const u = parsed as Partial<AuthUser>
+    return typeof u.id === 'string' && typeof u.username === 'string'
+      ? (u as AuthUser)
+      : null
+  } catch {
+    return null
+  }
+}
+
+export function cacheUser(user: AuthUser | null): void {
+  try {
+    if (user) localStorage.setItem(USER_KEY, JSON.stringify(user))
+    else localStorage.removeItem(USER_KEY)
+  } catch {
+    /* 同上：缓存失败只是首屏少一个用户名，不影响功能 */
+  }
+}
+
+/** 清掉本地登录态（令牌 + 缓存账号）。登出、401、改密码失败时都会用到。 */
+export function clearAuth(): void {
+  clearToken()
+  cacheUser(null)
+}
+
+/**
+ * 构造 Authorization 头。给绕过 axios 的 fetch 调用用
  * （目前只有 parseKnowledgeDoc，它要自己算 multipart boundary）。
  */
-function adminHeaders(): Record<string, string> {
-  const token = getAdminToken()
-  return token ? { 'X-Admin-Token': token } : {}
-}
-
-/**
- * 管理口令相关的失败单独成一条路径。
- *
- * ⚠️ 这里**故意绕过** toApiError 的"后端 detail 优先"原则：
- * 后端对 401 回的是"管理口令不正确。"、对 503 回的是"服务端未配置
- * TRIPMIND_ADMIN_TOKEN…"—— 它回答的是"为什么被拒"，
- * 而用户需要的是"接下来点哪里"。所以这两个状态码直接覆盖掉 detail。
- *
- * 其余状态码（400 / 404 / 409 / 超时…）照旧走 toApiError。
- */
-function toAdminError(
-  error: unknown,
-  fallback: string,
-  messages: ApiErrorMessages = {}
-): Error {
-  const { status } = readApiError(error)
-  if (status === 401) {
-    return new Error('管理口令不正确。请点右上角「管理口令」重新设置。')
-  }
-  if (status === 503) {
-    return new Error(
-      '服务端还没有配置管理口令，写操作已关闭。请联系部署者在 .env 里设置 TRIPMIND_ADMIN_TOKEN。'
-    )
-  }
-  return toApiError(error, fallback, messages)
+function authHeaders(): Record<string, string> {
+  const token = getToken()
+  return token ? { Authorization: `Bearer ${token}` } : {}
 }
 
 const apiClient = axios.create({
@@ -196,14 +205,18 @@ const apiClient = axios.create({
 // 请求拦截器
 apiClient.interceptors.request.use(
   (config) => {
-    // 只给受保护的写接口附口令（清单与理由见上面的 ADMIN_GUARDED）。
-    // 用 set() 而不是 config.headers['X-Admin-Token'] = ...：
-    // axios 1.x 里 headers 是 AxiosHeaders 实例，set() 是它的公开接口，
-    // 直接下标赋值在某些版本上会被后面的 merge 步骤吃掉。
-    if (needsAdminToken(config.method, config.url)) {
-      const token = getAdminToken()
-      if (token) config.headers.set('X-Admin-Token', token)
-    }
+    // **每个请求都带**令牌，不再是"筛出需要权限的那些"。
+    //
+    // 这是因为权限模型从"少数写接口要口令"变成了"服务端要知道你是谁"：
+    // 连 `GET /api/trip/plans` 都要按账号过滤，`GET /api/auth/me` 更离不开它。
+    // 维护一张"哪些请求要带"的清单在这个模型下只会不断漏项。
+    //
+    // 代价是**读接口也会带上自定义头**：非同源部署时会给它们各加一次
+    // CORS 预检。生产环境前后端同源（见 docs/DEPLOYMENT.md），无所谓；
+    // 本地开发走 vite 代理，也是同源。
+    const token = getToken()
+    if (token) config.headers.set('Authorization', `Bearer ${token}`)
+
     console.log('发送请求:', config.method?.toUpperCase(), config.url)
     return config
   },
@@ -220,7 +233,16 @@ apiClient.interceptors.response.use(
     return response
   },
   (error) => {
-    console.error('响应错误:', error.response?.status, error.message)
+    const status = error?.response?.status
+    console.error('响应错误:', status, error.message)
+
+    if (status === 401 && isSessionExpiry(error?.config?.url)) {
+      // 先清本地再通知 —— 通知的接收方（main.ts 里的守卫）会去读登录态，
+      // 顺序反了它会读到一份还没清掉的令牌，于是"以为还登着"而不跳转。
+      clearAuth()
+      onUnauthorized?.()
+    }
+
     return Promise.reject(error)
   }
 )
@@ -311,7 +333,12 @@ export async function generateTripPlan(formData: TripFormData): Promise<TripPlan
     return response.data
   } catch (error: unknown) {
     console.error('生成旅行计划失败:', error)
-    throw toApiError(error, '生成旅行计划失败')
+    // 生成行程现在要求登录。理论上未登录的用户到不了这一步（路由守卫会先拦），
+    // 但**会话在第 90 秒过期**这类情况是真实存在的 —— 那时他已经在等了，
+    // 所以要给一句能解释"为什么白等了"的话，而不是笼统的"生成失败"。
+    throw toApiError(error, '生成旅行计划失败', {
+      byStatus: { 401: '登录已过期，请重新登录后再生成。这次没有产生任何记录。' }
+    })
   }
 }
 
@@ -354,17 +381,26 @@ export async function healthCheck(): Promise<TripHealthResponse> {
 // ============ 历史行程 ============
 
 /**
- * 历史行程列表(按创建时间倒序)+ 累计统计
+ * 历史行程列表（按创建时间倒序）+ 累计统计
+ *
+ * @param scope `mine` 只看自己的；`all` 看全部用户 —— **仅管理员可用**，
+ *              普通账号调它会拿到 403（后端是显式拒绝，不是静默降级）。
  */
-export async function listPlans(limit = 50, offset = 0): Promise<PlanListResponse> {
+export async function listPlans(
+  limit = 50,
+  offset = 0,
+  scope: PlanScope = 'mine'
+): Promise<PlanListResponse> {
   try {
     const response = await apiClient.get<PlanListResponse>('/api/trip/plans', {
-      params: { limit, offset }
+      params: { limit, offset, scope }
     })
     return response.data
   } catch (error: unknown) {
     console.error('读取历史行程失败:', error)
-    throw toApiError(error, '读取历史行程失败')
+    throw toApiError(error, '读取历史行程失败', {
+      byStatus: { 403: '只有管理员可以查看全部用户的行程' }
+    })
   }
 }
 
@@ -402,8 +438,11 @@ export async function updatePlan(planId: string, plan: TripPlan): Promise<PlanDe
     return response.data
   } catch (error: unknown) {
     console.error('保存行程失败:', error)
-    // 受保护接口：401/503 要提示"去设置管理口令"而不是笼统的保存失败
-    throw toAdminError(error, '保存行程失败')
+    // 403 是"这条行程不是你的"。要让用户看懂是哪一种拒绝 ——
+    // 会话过期是 401，那条路径由响应拦截器统一处理（清登录态 + 跳登录页）。
+    throw toApiError(error, '保存行程失败', {
+      byStatus: { 403: '只能修改自己的行程' }
+    })
   }
 }
 
@@ -415,7 +454,9 @@ export async function deletePlan(planId: string): Promise<void> {
     await apiClient.delete(`/api/trip/plans/${encodeURIComponent(planId)}`)
   } catch (error: unknown) {
     console.error('删除行程失败:', error)
-    throw toAdminError(error, '删除行程失败')
+    throw toApiError(error, '删除行程失败', {
+      byStatus: { 403: '只能删除自己的行程' }
+    })
   }
 }
 
@@ -494,7 +535,7 @@ export async function startKnowledgeIngest(
     return response.data
   } catch (error: unknown) {
     // 409 = 已有任务在跑。这句话直接给用户看,不用改写
-    throw toAdminError(error, '提交灌库任务失败')
+    throw toApiError(error, '提交灌库任务失败')
   }
 }
 
@@ -510,7 +551,7 @@ export async function getKnowledgeIngestTask(taskId: string): Promise<KnowledgeI
     // 404 说明后端的任务表里没有这个 id —— 最常见的原因是后端重启过,
     // 而任务状态是**进程内**的(见后端 knowledge.py 的 _TASKS)。
     // 这句提示要留住,否则用户只看到"查询失败",会一直重试一个不存在的任务。
-    throw toAdminError(error, '查询任务失败', {
+    throw toApiError(error, '查询任务失败', {
       byStatus: { 404: '任务不存在（后端可能已重启）' }
     })
   }
@@ -550,9 +591,10 @@ export async function parseKnowledgeDoc(payload: {
 
   const response = await fetch(`${API_BASE_URL}/api/knowledge/docs/parse`, {
     method: 'POST',
-    // 这个接口受管理口令保护，但它绕过了 axios，拦截器管不到它 ——
-    // 所以头要在这里手动带上（adminHeaders 和拦截器读的是同一处存储）。
-    headers: adminHeaders(),
+    // 这个接口是管理员专属，但它绕过了 axios，拦截器管不到它 ——
+    // 所以 Authorization 要在这里手动带上（authHeaders 和拦截器
+    // 读的是同一处存储，两边的令牌不会不一致）。
+    headers: authHeaders(),
     body: form
   })
   // fetch 不像 axios 那样在非 2xx 时抛异常,也不会替我们把 body 解析成 JSON,
@@ -560,13 +602,18 @@ export async function parseKnowledgeDoc(payload: {
   // `unknown`,再按需要收窄 —— 否则一个 `any` 会顺着 data 传下去。
   const body: unknown = await response.json().catch(() => null)
   if (!response.ok) {
-    // 口令问题优先说清楚 —— 后端此时回的话是"管理口令不正确。",
-    // 但用户更需要的知道去哪儿设置（和 toAdminError 同样的取舍）。
+    // 401/403 要**优先于**后端的 detail 说清楚，和 axios 那条路径同样的取舍：
+    // 后端回的是"该操作需要管理员权限。"（它在回答"为什么被拒"），
+    // 而用户需要的是"我现在该做什么"。
+    //
+    // ⚠️ 401 这里**不触发**全局登出回调 —— 因为这个函数走的是原生 fetch，
+    // 拦截器根本不经过它。所以令牌真过期时，只有这一次调用会被拒。
+    // 下一次走 axios 的请求会把登录态清掉并跳转，用户不会卡住。
     if (response.status === 401) {
-      throw new Error('管理口令不正确。请点右上角「管理口令」重新设置。')
+      throw new Error('登录已过期，请重新登录后再上传。')
     }
-    if (response.status === 503) {
-      throw new Error('服务端还没有配置管理口令，写操作已关闭。请联系部署者设置 TRIPMIND_ADMIN_TOKEN。')
+    if (response.status === 403) {
+      throw new Error('上传攻略需要管理员权限。')
     }
     // 后端对"文件不适合入库"这类问题统一回 422 + 一句能照做的话
     const detail = (body as { detail?: unknown } | null)?.detail
@@ -587,7 +634,7 @@ export async function ingestKnowledgeDoc(docId: string): Promise<KnowledgeIngest
     )
     return response.data
   } catch (error: unknown) {
-    throw toAdminError(error, '提交入库任务失败')
+    throw toApiError(error, '提交入库任务失败')
   }
 }
 
@@ -599,7 +646,7 @@ export async function listKnowledgeDocs(): Promise<KnowledgeDocListResponse> {
     })
     return response.data
   } catch (error: unknown) {
-    throw toAdminError(error, '读取攻略列表失败')
+    throw toApiError(error, '读取攻略列表失败')
   }
 }
 
@@ -613,7 +660,7 @@ export async function getKnowledgeDoc(docId: string): Promise<KnowledgeDocDetail
     return response.data
   } catch (error: unknown) {
     // 404 给具体文案:文档被删掉是常见情况,提示要能指向"重新上传"
-    throw toAdminError(error, '读取攻略详情失败', {
+    throw toApiError(error, '读取攻略详情失败', {
       byStatus: { 404: '这篇攻略不存在（可能已被删除）' }
     })
   }
@@ -632,7 +679,7 @@ export async function deleteKnowledgeDoc(
     })
     return response.data
   } catch (error: unknown) {
-    throw toAdminError(error, '删除失败')
+    throw toApiError(error, '删除失败')
   }
 }
 
@@ -646,7 +693,7 @@ export async function toggleKnowledgeRag(enabled: boolean): Promise<KnowledgeRag
     )
     return response.data
   } catch (error: unknown) {
-    throw toAdminError(error, '切换失败')
+    throw toApiError(error, '切换失败')
   }
 }
 
@@ -710,6 +757,194 @@ export async function parseIntentWithLLM(text: string): Promise<ParseIntentRespo
     return response.data;
   } catch {
     return null;
+  }
+}
+
+// ============ 账号 ============
+
+/**
+ * 登录。成功后**由调用方决定**要不要写本地存储。
+ *
+ * 这里不自动 `setToken`，是为了让"登录成功"和"记住登录状态"两件事显式分开：
+ * 调用方（Login.vue）拿到响应后再写 —— 如果写失败了（隐私模式），
+ * 至少还能提示用户"本次登录在刷新后会失效"，而不是静默地不生效。
+ */
+export async function login(username: string, password: string): Promise<LoginResponse> {
+  const response = await apiClient.post<LoginResponse>(
+    '/api/auth/login',
+    { username, password },
+    // 登录要跑一次 pbkdf2（服务端约 0.3 秒），但绝不该用默认的 300 秒 ——
+    // 密码错了要立刻知道，而不是转五分钟的圈。
+    { timeout: 20000 }
+  )
+  return response.data
+}
+
+/**
+ * 注册。成功后直接返回登录令牌 —— 不用让用户再手打一次刚设的密码。
+ *
+ * ⚠️ **没有 `role` 参数**,后端也不接受(见 `routes/auth.py::register`)。
+ * 注册出来的账号固定是普通用户 —— 这是整套权限模型的地基。
+ */
+export async function register(
+  username: string,
+  password: string,
+  displayName?: string
+): Promise<LoginResponse> {
+  try {
+    const response = await apiClient.post<LoginResponse>(
+      '/api/auth/register',
+      { username, password, display_name: displayName || null },
+      // 注册要跑一次 pbkdf2(服务端约 0.3 秒),用默认的 300 秒会让
+      // 出错的用户白等 —— 20 秒足够。
+      { timeout: 20000 }
+    )
+    return response.data
+  } catch (error: unknown) {
+    // 400 / 409 的 detail 里是后端写好的可照做的话
+    // (如「用户名「x」已被占用」「密码至少 6 位」),优先透传;
+    // 403 是站点关闭了自助注册;429 是节流。
+    throw toApiError(error, '注册失败', {
+      byStatus: {
+        403: '本站已关闭自助注册，请联系管理员开通账号',
+        429: '注册请求过于频繁，请稍后再试'
+      }
+    })
+  }
+}
+
+/**
+ * 登出。**服务端失败也要清本地** ——
+ * 用户点了"退出"，本地就必须退干净；否则会出现"看起来登出了、
+ * 刷新一下又回来了"这种最让人不安的状态。
+ */
+export async function logout(): Promise<void> {
+  try {
+    await apiClient.post('/api/auth/logout', {}, { timeout: 15000 })
+  } catch (error: unknown) {
+    console.warn('服务端登出失败，本地登录态已清除:', error)
+  } finally {
+    clearAuth()
+  }
+}
+
+/** 当前账号。页面刷新时用它恢复登录态。 */
+export async function fetchMe(): Promise<AuthUser> {
+  const response = await apiClient.get<MeResponse>('/api/auth/me', { timeout: 15000 })
+  return response.data.user
+}
+
+/**
+ * 修改自己的密码。需要原密码。
+ *
+ * 返回的新令牌必须由调用方写回本地 —— 服务端改密时会吊销全部会话
+ * （包括当前这个），不写回的话用户改完密码立刻变成未登录。
+ */
+export async function changePassword(
+  oldPassword: string,
+  newPassword: string
+): Promise<ChangePasswordResponse> {
+  try {
+    const response = await apiClient.post<ChangePasswordResponse>(
+      '/api/auth/password',
+      { old_password: oldPassword, new_password: newPassword },
+      { timeout: 20000 }
+    )
+    return response.data
+  } catch (error: unknown) {
+    throw toApiError(error, '修改密码失败', {
+      byStatus: { 401: '原密码不正确' }
+    })
+  }
+}
+
+// ---- 账号管理（仅管理员） ----
+
+export async function listUsers(): Promise<UserListResponse> {
+  try {
+    const response = await apiClient.get<UserListResponse>('/api/auth/users', {
+      timeout: 20000
+    })
+    return response.data
+  } catch (error: unknown) {
+    throw toApiError(error, '读取账号列表失败', {
+      byStatus: { 403: '需要管理员权限' }
+    })
+  }
+}
+
+export async function createUser(payload: {
+  username: string
+  password: string
+  role: UserRole
+  display_name?: string
+}): Promise<AuthUser> {
+  try {
+    const response = await apiClient.post<AuthUser>('/api/auth/users', payload, {
+      timeout: 20000
+    })
+    return response.data
+  } catch (error: unknown) {
+    // 409 是后端明确回的"用户名已被占用"，它那句 detail 比前端能编的准，交给 toApiError 透传
+    throw toApiError(error, '创建账号失败', {
+      byStatus: { 403: '需要管理员权限' }
+    })
+  }
+}
+
+/**
+ * 改账号。**只传要改的字段** —— 后端用 `model_fields_set` 区分
+ * "没传"和"传了 null"，所以少传一个键不会被当成"清空它"。
+ */
+export async function updateUser(
+  userId: string,
+  payload: {
+    password?: string
+    role?: UserRole
+    is_active?: boolean
+    display_name?: string | null
+  }
+): Promise<AuthUser> {
+  try {
+    const response = await apiClient.patch<AuthUser>(
+      `/api/auth/users/${encodeURIComponent(userId)}`,
+      payload,
+      { timeout: 20000 }
+    )
+    return response.data
+  } catch (error: unknown) {
+    throw toApiError(error, '修改账号失败', {
+      byStatus: { 403: '需要管理员权限', 404: '账号不存在' }
+    })
+  }
+}
+
+/** 删账号。名下的行程不会被删除，只转为无主（仅管理员可见）。 */
+export async function deleteUser(userId: string): Promise<void> {
+  try {
+    await apiClient.delete(`/api/auth/users/${encodeURIComponent(userId)}`, {
+      timeout: 20000
+    })
+  } catch (error: unknown) {
+    throw toApiError(error, '删除账号失败', {
+      byStatus: { 403: '需要管理员权限', 404: '账号不存在' }
+    })
+  }
+}
+
+/** 强制某账号下线（保留账号）。用于"怀疑某人的令牌泄露了"。 */
+export async function revokeUserSessions(userId: string): Promise<string> {
+  try {
+    const response = await apiClient.post<{ message: string }>(
+      `/api/auth/users/${encodeURIComponent(userId)}/sessions/revoke`,
+      {},
+      { timeout: 20000 }
+    )
+    return response.data.message
+  } catch (error: unknown) {
+    throw toApiError(error, '强制下线失败', {
+      byStatus: { 403: '需要管理员权限', 404: '账号不存在' }
+    })
   }
 }
 

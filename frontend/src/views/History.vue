@@ -3,19 +3,37 @@
     <header class="hd">
       <div class="hd-text">
         <h1 class="hd-title">历史行程</h1>
-        <p class="hd-sub">所有生成过的行程都在这里，点一条可以查看完整内容</p>
+        <p class="hd-sub">
+          {{ isAdmin
+            ? scope === 'all'
+              ? '全部用户生成过的行程，点一条可以查看完整内容'
+              : '你自己生成过的行程。切到「全部用户」可以看别人的'
+            : '你生成过的行程都在这里，点一条可以查看完整内容' }}
+        </p>
       </div>
       <div class="hd-actions">
         <a-button :loading="loading" @click="load">
           <template #icon><ReloadOutlined /></template>
           刷新
         </a-button>
-        <a-button type="primary" @click="router.push('/')">
+        <a-button type="primary" @click="router.push('/app')">
           <template #icon><PlusOutlined /></template>
           新建行程
         </a-button>
       </div>
     </header>
+
+    <!-- 范围切换，**只有管理员看得到**。
+         普通用户没有这个控件，因为对他来说只有一个合法范围 ——
+         给他一个点了会 403 的开关是添乱。 -->
+    <div v-if="isAdmin" class="scope">
+      <a-segmented v-model:value="scope" :options="SCOPE_OPTIONS" @change="onScopeChange" />
+      <span class="scope-hint">
+        {{ scope === 'all'
+          ? '正在显示所有用户的行程，已标注归属'
+          : '正在显示你自己的行程' }}
+      </span>
+    </div>
 
     <!-- ---------------- 聚合统计 ---------------- -->
     <!-- 没有数据时整块不显示，免得出现四个 0 -->
@@ -81,11 +99,15 @@
     <StatePanel
       v-else-if="!allRows.length"
       state="empty"
-      title="还没有任何行程"
-      description="生成第一个行程后，它会自动保存在这里。"
+      :title="scope === 'all' ? '还没有任何行程' : '你还没有生成过行程'"
+      :description="
+        scope === 'all'
+          ? '所有用户生成过的行程都会出现在这里。'
+          : '生成第一个行程后，它会自动保存在这里。'
+      "
     >
       <template #extra>
-        <a-button type="primary" @click="router.push('/')">去生成一个</a-button>
+        <a-button type="primary" @click="router.push('/app')">去生成一个</a-button>
       </template>
     </StatePanel>
 
@@ -132,6 +154,15 @@
               <span class="u-num">
                 {{ record.total_budget ? `¥${fmtNum(record.total_budget)}` : '—' }}
               </span>
+            </template>
+
+            <template v-else-if="column.key === 'owner'">
+              <!-- 无主行程（账号体系之前留下的、或创建者账号被删了）显式标出来。
+                   不标的话它会显示成空白，用户会以为"这条数据坏了"。 -->
+              <a-tag v-if="record.owner_username" color="default">
+                {{ record.owner_username }}
+              </a-tag>
+              <span v-else class="muted">无主</span>
             </template>
 
             <template v-else-if="column.key === 'status'">
@@ -186,9 +217,10 @@ import StatePanel from '@/components/common/StatePanel.vue';
 import PlanCardList from '@/components/history/PlanCardList.vue';
 import PlanStatusTag from '@/components/history/PlanStatusTag.vue';
 import { useScreen } from '@/composables/useScreen';
+import { useAuth } from '@/composables/useAuth';
 import { listPlans, deletePlan } from '@/services/api';
 import { PLAN_STATUS_MAP } from '@/constants/tripOptions';
-import type { PlanStats, PlanSummary } from '@/types';
+import type { PlanScope, PlanStats, PlanSummary } from '@/types';
 
 /**
  * 历史行程。
@@ -200,15 +232,36 @@ import type { PlanStats, PlanSummary } from '@/types';
  *    低于 WCAG AA 要求的 4.5:1。现在统一走 --text-2（约 7:1）。
  * 3. 手机上表格难用 —— 改为卡片列表。
  * 4. 状态标签原来定义在本文件的 script 里，结果页要用就得复制；现抽成公共组件。
+ *
+ * 账号体系上线后新增：
+ * 5. **范围随角色变**。普通用户固定只看得到自己的（服务端强制，前端没有开关）；
+ *    管理员多一个「只看我的 / 全部用户」切换，并在「全部用户」视图里显示归属列。
+ *    归属列**只在管理员视图里出现** —— 普通用户的响应里 `owner_username` 是 null，
+ *    留一列全是空的只会让人困惑。
  */
 
 const router = useRouter();
 const { isMobile } = useScreen();
+const { isAdmin } = useAuth();
 
 /** 接口 limit 上限就是 200（后端会 clamp），这里取满 */
 const LOAD_LIMIT = 200;
 const PAGE_SIZE_DESKTOP = 10;
 const PAGE_SIZE_MOBILE = 5;
+
+const SCOPE_OPTIONS = [
+  { label: '只看我的', value: 'mine' },
+  { label: '全部用户', value: 'all' }
+];
+
+/**
+ * 当前范围。默认 `mine` —— 与后端的默认值一致。
+ *
+ * 默认选「全部用户」看起来更"管理员友好"，但那是错的：
+ * 管理员自己也是用户，他 99% 的时间在看自己刚生成的那条。
+ * 而且默认值保守 = 改错时不会把别人的数据糊到眼前。
+ */
+const scope = ref<PlanScope>('mine');
 
 const allRows = ref<PlanSummary[]>([]);
 const stats = ref<PlanStats | null>(null);
@@ -221,15 +274,22 @@ const page = ref(1);
 
 const pageSize = computed(() => (isMobile.value ? PAGE_SIZE_MOBILE : PAGE_SIZE_DESKTOP));
 
-const columns = [
-  { title: '行程', key: 'title', width: 220 },
-  { title: '日期', key: 'dates', width: 160 },
-  { title: '天数', dataIndex: 'travel_days', key: 'days', width: 70 },
-  { title: '总预算', key: 'budget', width: 110 },
-  { title: '成本', key: 'cost', width: 150 },
-  { title: '状态', key: 'status', width: 130 },
-  { title: '操作', key: 'action', width: 140 },
-];
+const columns = computed(() => {
+  const base = [
+    { title: '行程', key: 'title', width: 220 },
+    { title: '日期', key: 'dates', width: 160 },
+    { title: '天数', dataIndex: 'travel_days', key: 'days', width: 70 },
+    { title: '总预算', key: 'budget', width: 110 },
+    { title: '成本', key: 'cost', width: 150 }
+  ];
+  // 归属列只放进"全部用户"视图 —— 这是它唯一有意义的场合
+  if (isAdmin.value && scope.value === 'all') {
+    base.push({ title: '归属', key: 'owner', width: 120 });
+  }
+  base.push({ title: '状态', key: 'status', width: 130 });
+  base.push({ title: '操作', key: 'action', width: 140 });
+  return base;
+});
 
 const filtered = computed(() => {
   const kw = keyword.value.trim().toLowerCase();
@@ -265,7 +325,7 @@ async function load() {
   loading.value = true;
   error.value = '';
   try {
-    const res = await listPlans(LOAD_LIMIT, 0);
+    const res = await listPlans(LOAD_LIMIT, 0, scope.value);
     allRows.value = res.data || [];
     stats.value = res.stats || null;
     page.value = 1;
@@ -277,6 +337,21 @@ async function load() {
   } finally {
     loading.value = false;
   }
+}
+
+/**
+ * 切换范围后重新拉数据。
+ *
+ * **必须重新请求**，不能在前端过滤：普通用户的响应里压根没有别人的数据
+ * （这正是权限控制生效的地方），所以"全部用户"这个视图只能由服务端提供。
+ * 顺手清掉筛选和页码 —— 换了数据源之后旧的筛选条件大概率一条都匹配不上，
+ * 用户会看到"没有匹配的行程"而以为切换坏了。
+ */
+function onScopeChange() {
+  keyword.value = '';
+  statusFilter.value = 'all';
+  page.value = 1;
+  void load();
 }
 
 const openPlan = (id: string) => {
@@ -331,6 +406,20 @@ onMounted(load);
   display: flex;
   gap: var(--sp-3);
   flex-wrap: wrap;
+}
+
+/* ---------------- 范围切换（仅管理员） ---------------- */
+.scope {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  flex-wrap: wrap;
+  margin-bottom: var(--sp-4);
+}
+
+.scope-hint {
+  font-size: var(--fs-caption);
+  color: var(--text-2);
 }
 
 /* ---------------- 统计 ---------------- */
@@ -397,6 +486,13 @@ onMounted(load);
 .plan-sub {
   color: var(--text-2);
   font-size: var(--fs-caption);
+}
+
+/* 归属列里"无主"的占位。走 --text-2 而不是更浅的色 ——
+   它在管理员视图里是一条真实信息（这批行程没有归属），
+   不该因为"看起来像空值"就降到对比度不合规的灰度。 */
+.muted {
+  color: var(--text-2);
 }
 
 /* ---------------- 分页 ---------------- */

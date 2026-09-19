@@ -654,3 +654,113 @@ class TestMilvusStoreLoadsBeforeSearch:
         store.search([0.0] * 4, top_k=3)
 
         assert fake.load_calls == 2
+
+
+# ===========================================================================
+# 上传层的按人隔离
+# ===========================================================================
+
+
+class Test按人隔离的过滤表达式:
+    """`user_filter()` —— 决定"检索时能不能搜到别人的攻略"。
+
+    这是个纯函数,但**写错方向的后果是静默的**:过滤条件加错层,内置知识库
+    会一条都搜不到(检索异常被吞成空列表),而界面上只显示"没有命中"。
+    """
+
+    def test_上传层按人过滤(self):
+        from app.services.knowledge_service import user_filter
+
+        assert user_filter("uploaded", "abc123") == 'user_id == "abc123"'
+
+    def test_内置两层不受影响(self):
+        """内置层是全站共享的公共知识 —— 给它加过滤会**一条都匹配不到**,
+        因为那些行里根本没有 user_id 字段。"""
+        from app.services.knowledge_service import user_filter
+
+        for ns in ("poi_facts", "city_guides"):
+            assert user_filter(ns, "abc123") is None
+
+    def test_不传账号则不过滤(self):
+        """None = 管理员视角 / 命令行脚本。调用方必须自己保证不滥用。"""
+        from app.services.knowledge_service import user_filter
+
+        assert user_filter("uploaded", None) is None
+
+    def test_空账号匹配不到任何东西(self):
+        """⚠️ 空账号**绝不能**退化成"不过滤"。
+
+        那会让一个空账号搜到全站所有人上传的攻略 —— 而且是静默的。
+        所以这里要求返回一个**永远匹配不到**的条件,而不是 None。
+        """
+        from app.services.knowledge_service import user_filter
+
+        expr = user_filter("uploaded", "")
+        assert expr is not None, "空账号返回 None 等于'不过滤',会把全站攻略放出来"
+        assert "__no_owner__" in expr
+
+    def test_拒绝把奇怪的字符拼进表达式(self):
+        """这是**唯一一处把变量拼进查询表达式**的地方。
+
+        账号 id 是我们自己生成的 uuid4().hex,理论上永远安全;但拒绝一个
+        非法值的成本是零,而漏掉它的成本是用户可控字符串进了表达式。
+        """
+        from app.services.knowledge_service import user_filter
+
+        with pytest.raises(ValueError):
+            user_filter("uploaded", 'abc" or user_id != "')
+
+
+# ===========================================================================
+# 上传层的按人隔离
+# ===========================================================================
+
+
+class Test按人隔离的过滤表达式:
+    """`user_filter()` —— 决定"检索时能不能搜到别人的攻略"。
+
+    这是个纯函数,但**写错方向的后果是静默的**:过滤条件加错层,内置知识库
+    会一条都搜不到(检索异常被吞成空列表),而界面上只显示"没有命中"。
+    """
+
+    def test_上传层按人过滤(self):
+        from app.services.knowledge_service import user_filter
+
+        assert user_filter("uploaded", "abc123") == 'user_id == "abc123"'
+
+    def test_内置两层不受影响(self):
+        """内置层是全站共享的公共知识 —— 给它加过滤会**一条都匹配不到**,
+        因为那些行里根本没有 user_id 字段。"""
+        from app.services.knowledge_service import user_filter
+
+        for ns in ("poi_facts", "city_guides"):
+            assert user_filter(ns, "abc123") is None
+
+    def test_不传账号则不过滤(self):
+        """None = 管理员视角 / 命令行脚本。调用方必须自己保证不滥用。"""
+        from app.services.knowledge_service import user_filter
+
+        assert user_filter("uploaded", None) is None
+
+    def test_空账号匹配不到任何东西(self):
+        """⚠️ 空账号**绝不能**退化成"不过滤"。
+
+        那会让一个空账号搜到全站所有人上传的攻略 —— 而且是静默的。
+        所以这里要求返回一个**永远匹配不到**的条件,而不是 None。
+        """
+        from app.services.knowledge_service import user_filter
+
+        expr = user_filter("uploaded", "")
+        assert expr is not None, "空账号返回 None 等于'不过滤',会把全站攻略放出来"
+        assert "__no_owner__" in expr
+
+    def test_拒绝把奇怪的字符拼进表达式(self):
+        """这是**唯一一处把变量拼进查询表达式**的地方。
+
+        账号 id 是我们自己生成的 uuid4().hex,理论上永远安全;但拒绝一个
+        非法值的成本是零,而漏掉它的成本是用户可控字符串进了表达式。
+        """
+        from app.services.knowledge_service import user_filter
+
+        with pytest.raises(ValueError):
+            user_filter("uploaded", 'abc" or user_id != "')

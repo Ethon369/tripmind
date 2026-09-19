@@ -22,22 +22,26 @@ export const STORAGE_KEYS = {
    */
   TRIP_DRAFT: 'tripDraft',
   /**
-   * 管理口令（后端 TRIPMIND_ADMIN_TOKEN 的值）。App.vue 写入，api.ts 读取。
+   * 登录令牌（后端 /api/auth/login 返回的 Bearer token）。api.ts 读写。
    *
-   * ⚠️ 为什么是 sessionStorage 而不是 localStorage：
-   * sessionStorage 的生命周期止于标签页关闭，口令不会长期留在磁盘上；
-   * 关掉浏览器就等于"登出"。localStorage 会让它一直躺着，
-   * 在共享电脑上等于把写权限留给了下一个人。
+   * ⚠️ **从 sessionStorage 改成 localStorage 了** —— 这是本次改动里
+   * 唯一一处**主动放松**的存储策略，理由要说清楚：
    *
-   * ⚠️ 为什么不用 cookie：cookie 会随每个请求自动发出（含跨站请求），
-   * 而 X-Admin-Token 只在我们明确挑选的那几个写接口上附加。
-   * 这也是**不**把口令存进 store/全局单例的原因 —— 读取点只有一处，
-   * 就是 api.ts 里的 getAdminToken()。
+   *   旧的东西是一个**共享管理口令**。它不区分用户，关掉标签页就等于
+   *   "登出"，而"关掉浏览器后写权限自动消失"在那个设计下是纯收益 ——
+   *   共享电脑上少一个把写权限留给下一个人的风险。
    *
-   * 它不是登录凭证，只是一道"别让爬虫误删数据"的门闩：
-   * 全站没有用户体系，口令是共享的、无过期、也无法按人吊销。
+   *   现在是一个**按人签发的会话**。每次开新标签页都要重新输账号密码，
+   *   是任何有账号体系的网站都不会做的事 —— 用户会认为"登录坏了"。
+   *   而它的风险面也不同：泄露影响的是**一个人自己的数据**，
+   *   不是"任何人都能清库"。后端还给了过期时间（默认 7 天）和
+   *   "停用/改密立即吊销"两道兜底。
+   *
+   * 也就是说：这个改动**不是**因为 localStorage 变安全了，而是因为
+   * 存的东西变了、代价也变了。在共享电脑上使用时仍然应当主动点「退出登录」——
+   * 界面在账号菜单里提供了这个动作，而不是靠关标签页。
    */
-  ADMIN_TOKEN: 'tripmindAdminToken',
+  AUTH_TOKEN: 'tripmindAuthToken',
 } as const;
 
 export type StorageKey = (typeof STORAGE_KEYS)[keyof typeof STORAGE_KEYS];

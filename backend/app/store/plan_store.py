@@ -50,6 +50,7 @@ def _loads(raw: str | None) -> Any:
 
 def _row_to_summary(row: sqlite3.Row) -> dict[str, Any]:
     """历史列表用的精简结构 —— 不带完整的 plan_json(可能很大)。"""
+    keys = row.keys()
     return {
         "id": row["id"],
         "title": row["title"],
@@ -69,7 +70,16 @@ def _row_to_summary(row: sqlite3.Row) -> dict[str, Any]:
         # 从 plan_json 里取摘要,避免前端为了列表再去解析整份行程
         "attractions": _count_attractions(row["plan_json"]),
         "total_budget": _total_budget(row["plan_json"]),
+        # 归属。**能不能给前端看由路由决定**(只有管理员才该看到"这条是谁的"),
+        # 存储层负责如实返回 —— 在这里按角色过滤会让 store 需要知道"当前是谁",
+        # 那是 API 层的事。
+        #
+        # 用 keys() 判断而不是 try:调用方可能不 JOIN users(比如自己拼的查询),
+        # 缺列时静默给 None,而不是在读取列表时抛 KeyError 把整页打挂。
+        "user_id": row["user_id"] if "user_id" in keys else None,
+        "owner_username": row["owner_username"] if "owner_username" in keys else None,
     }
+
 
 
 def _count_attractions(plan_json: str | None) -> int:
@@ -97,8 +107,19 @@ class PlanStore:
 
     # ---------- 写 ----------
 
-    def create_running(self, request: Any, run_id: str | None = None) -> str:
+    def create_running(
+        self,
+        request: Any,
+        run_id: str | None = None,
+        user_id: str | None = None,
+    ) -> str:
         """在调用 LLM 之前先落一条 status='running' 的记录。
+
+        Args:
+            user_id: 归属账号。**在这里就写进去**,而不是等生成完再回填 ——
+                生成过程中进程崩掉时,那条 running 记录也已经带着归属,
+                管理员能在列表里看到"谁的这次生成中断了"。留空表示无主
+                (账号体系之前的数据,或未启用登录时)。
 
         Returns:
             plan_id(uuid4().hex),同时就是分享链接里的 id
@@ -114,8 +135,8 @@ class PlanStore:
                 INSERT INTO plans (
                     id, created_at, updated_at, status,
                     city, start_date, end_date, travel_days, title,
-                    request_json, run_id
-                ) VALUES (?, ?, ?, 'running', ?, ?, ?, ?, ?, ?, ?)
+                    request_json, run_id, user_id
+                ) VALUES (?, ?, ?, 'running', ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     plan_id, now, now,
@@ -126,6 +147,7 @@ class PlanStore:
                     f"{city} {days}日游" if city else None,
                     _dumps(request),
                     run_id,
+                    user_id,
                 ),
             )
         return plan_id
@@ -252,8 +274,22 @@ class PlanStore:
     # ---------- 读 ----------
 
     def get_plan(self, plan_id: str) -> dict[str, Any] | None:
+        """取一条行程。**不在这里判权限** —— 调用方拿到 `user_id` 后自己判
+        (见 `api/deps.py` 的 `can_access_plan`)。
+
+        用 LEFT JOIN 而不是 JOIN:无主行程(user_id IS NULL)也必须是可见的,
+        INNER JOIN 会让它们从详情页凭空消失。
+        """
         with connect(self.db_path) as conn:
-            row = conn.execute("SELECT * FROM plans WHERE id = ?", (plan_id,)).fetchone()
+            row = conn.execute(
+                """
+                SELECT p.*, u.username AS owner_username
+                FROM plans p
+                LEFT JOIN users u ON u.id = p.user_id
+                WHERE p.id = ?
+                """,
+                (plan_id,),
+            ).fetchone()
         if row is None:
             return None
         return {
@@ -274,6 +310,8 @@ class PlanStore:
             "usage_source": row["usage_source"],
             "latency_ms": row["latency_ms"],
             "llm_calls": row["llm_calls"],
+            "user_id": row["user_id"],
+            "owner_username": row["owner_username"],
         }
 
     def list_plans(
@@ -281,44 +319,80 @@ class PlanStore:
         limit: int = 50,
         offset: int = 0,
         include_running: bool = False,
+        user_id: str | None = None,
     ) -> list[dict[str, Any]]:
-        """历史列表,按创建时间倒序。"""
-        placeholders = ",".join("?" for _ in _VISIBLE_STATUSES)
-        sql = f"SELECT * FROM plans WHERE status IN ({placeholders})"
-        params: list[Any] = list(_VISIBLE_STATUSES)
-        if include_running:
-            sql = "SELECT * FROM plans WHERE 1=1"
-            params = []
-        sql += " ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?"
+        """历史列表,按创建时间倒序。
+
+        Args:
+            user_id: 只列这个账号的行程。**None 表示不过滤(全部)** ——
+                所以"看全部"这个权限必须在调用方把关,不能靠这里。
+                路由层把它实现成"管理员才允许传 None",见 `routes/trip.py`。
+                用一个显式的布尔开关(`mine_only`)会让"无主的也要算进来吗"
+                这种问题没法表达,而 user_id 语义只有一个。
+        """
+        sql = "SELECT p.*, u.username AS owner_username FROM plans p " \
+              "LEFT JOIN users u ON u.id = p.user_id"
+        params: list[Any] = []
+
+        conditions: list[str] = []
+        if not include_running:
+            placeholders = ",".join("?" for _ in _VISIBLE_STATUSES)
+            conditions.append(f"p.status IN ({placeholders})")
+            params.extend(_VISIBLE_STATUSES)
+        if user_id is not None:
+            conditions.append("p.user_id = ?")
+            params.append(user_id)
+        if conditions:
+            sql += " WHERE " + " AND ".join(conditions)
+
+        sql += " ORDER BY p.created_at DESC, p.id DESC LIMIT ? OFFSET ?"
         params += [int(limit), int(offset)]
 
         with connect(self.db_path) as conn:
             rows = conn.execute(sql, params).fetchall()
         return [_row_to_summary(r) for r in rows]
 
-    def count_plans(self, include_running: bool = False) -> int:
-        if include_running:
-            sql, params = "SELECT COUNT(*) AS n FROM plans", ()
-        else:
+    def count_plans(self, include_running: bool = False, user_id: str | None = None) -> int:
+        conditions: list[str] = []
+        params: list[Any] = []
+        if not include_running:
             placeholders = ",".join("?" for _ in _VISIBLE_STATUSES)
-            sql = f"SELECT COUNT(*) AS n FROM plans WHERE status IN ({placeholders})"
-            params = _VISIBLE_STATUSES
+            conditions.append(f"status IN ({placeholders})")
+            params.extend(_VISIBLE_STATUSES)
+        if user_id is not None:
+            conditions.append("user_id = ?")
+            params.append(user_id)
+
+        sql = "SELECT COUNT(*) AS n FROM plans"
+        if conditions:
+            sql += " WHERE " + " AND ".join(conditions)
         with connect(self.db_path) as conn:
             return int(conn.execute(sql, params).fetchone()["n"])
 
-    def stats(self) -> dict[str, Any]:
-        """给历史页顶部用的聚合数字。"""
+    def stats(self, user_id: str | None = None) -> dict[str, Any]:
+        """给历史页顶部用的聚合数字。
+
+        ⚠️ 这个数字会**跟着角色变**:管理员看到的是全站成本,普通用户看到的
+        是自己那部分。这是有意的 —— 顶部那块写的是"累计花费",如果普通用户
+        看到的是全站数字,而下面的列表只有自己的几条,两者对不上会让人以为
+        列表漏了数据。
+        """
+        placeholders = ",".join("?" for _ in _VISIBLE_STATUSES)
+        sql = f"""
+            SELECT COUNT(*)              AS total,
+                   COALESCE(SUM(cost_cny), 0)   AS cost,
+                   COALESCE(SUM(total_tokens), 0) AS tokens,
+                   COALESCE(SUM(llm_calls), 0)  AS calls
+            FROM plans
+            WHERE status IN ({placeholders})
+        """
+        params: list[Any] = list(_VISIBLE_STATUSES)
+        if user_id is not None:
+            sql += " AND user_id = ?"
+            params.append(user_id)
+
         with connect(self.db_path) as conn:
-            row = conn.execute(
-                """
-                SELECT COUNT(*)              AS total,
-                       COALESCE(SUM(cost_cny), 0)   AS cost,
-                       COALESCE(SUM(total_tokens), 0) AS tokens,
-                       COALESCE(SUM(llm_calls), 0)  AS calls
-                FROM plans
-                WHERE status IN ('ok', 'fallback', 'error')
-                """
-            ).fetchone()
+            row = conn.execute(sql, params).fetchone()
         return {
             "total": int(row["total"]),
             "cost_cny": round(float(row["cost"]), 6),

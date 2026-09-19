@@ -121,7 +121,66 @@ export interface PlanSummary {
   warnings: string[]
   attractions: number
   total_budget: number
+  /**
+   * 归属账号 id / 用户名。**只有管理员看得到** —— 普通用户（以及通过分享
+   * 链接匿名打开的人）拿到的是 null。判定在服务端，前端只负责"有就显示"。
+   */
+  user_id?: string | null
+  owner_username?: string | null
 }
+
+// ============ 账号与登录(对应后端 routes/auth.py) ============
+
+/** `admin` 能管理账号、看全部行程、用知识库；`user` 只看得到自己的行程。 */
+export type UserRole = 'admin' | 'user'
+
+export interface AuthUser {
+  id: string
+  username: string
+  role: UserRole
+  display_name?: string | null
+  is_active: boolean
+  created_at: string
+  last_login_at?: string | null
+  /** 只在账号列表里有：这个人名下有多少条行程 */
+  plan_count?: number | null
+}
+
+export interface LoginResponse {
+  success: boolean
+  message: string
+  /** 后续请求放在 `Authorization: Bearer <token>` */
+  token: string
+  expires_at: string
+  user: AuthUser
+}
+
+export interface MeResponse {
+  success: boolean
+  user: AuthUser
+}
+
+export interface ChangePasswordResponse {
+  success: boolean
+  message: string
+  /** 改密码会吊销全部会话，服务端换发的新令牌 —— 前端必须覆盖本地那份 */
+  token: string
+  expires_at: string
+}
+
+export interface UserListResponse {
+  success: boolean
+  users: AuthUser[]
+  summary: {
+    total?: number
+    admins?: number
+    active?: number
+    disabled?: number
+  }
+}
+
+/** 历史列表的可见范围。`all` 仅管理员可用（否则后端 403）。 */
+export type PlanScope = 'mine' | 'all'
 
 /** 历史页顶部的聚合数字。 */
 export interface PlanStats {
@@ -160,6 +219,14 @@ export interface PlanDetailResponse {
   meta?: PlanSummary
   /** 这次生成检索到的知识出处(按相关度降序)。没开 RAG / 没命中时为空数组 */
   knowledge?: KnowledgeSource[]
+  /**
+   * 当前请求者能不能改写这份行程(本人或管理员)。
+   *
+   * **由服务端算好**，前端算不出来：归属字段对非管理员是隐藏的，
+   * 所以前端无法自己判断"这是不是我的"。用它决定显不显示「编辑行程」——
+   * 否则普通人打开别人的行程会看到一排点了才 403 的按钮。
+   */
+  can_edit?: boolean
 }
 
 // ============ 知识库(RAG) ============

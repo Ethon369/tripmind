@@ -727,6 +727,7 @@ sudo tail -f /var/log/nginx/error.log
 | **网页报超时，但「历史行程」里却有这条记录** | 前端 axios 比后端实际耗时短 | 同上，三处一起调 |
 | 生成成功但景点名和坐标是编的 | 高德 MCP 未加载 | 检查 `/api/trip/health` 的 `mcp_tools_count` 是否为 16 |
 | 首次提交行程卡好几分钟，日志停在 `🔗 连接到 MCP 服务器...` | `uvx` 正从官方源装 `amap-mcp-server`（国内极慢），**不是卡死** | 设 `UV_INDEX_URL` 为国内镜像；并确认它真的传进了子进程，见附录第 4 个坑 |
+| **`/api/trip/health` 的 `mcp_tools_count` 是 0（应 16）／行程里景点和坐标是编的** | `uvx` **每次启动都要向索引校验一次包**（不是"装过就不再问"）。没配 `UV_INDEX_URL` 就去 pypi.org，国内**直接连不上** —— 日志里只有一行 `Failed to fetch: https://pypi.org/simple/amap-mcp-server/`，而接口照常 200、界面完全看不出异常 | 在 `.env` 里配 `UV_INDEX_URL` + `UV_DEFAULT_INDEX`（Docker 用根 `.env`，裸机用 `backend/.env`），再用镜像源预热一次 `uvx amap-mcp-server`。见附录第 4 个坑 |
 | 地图区域一片空白 | JS API Key 未配域名白名单 / 未配安全密钥 | 按 6.2 节配置 |
 | 前端改完 `.env` 没生效 | `VITE_` 变量是构建期注入 | 重新 `npm run build` 并刷新浏览器缓存 |
 | 提示"本次未能生成行程内容" | LLM 连不上（Key、额度、网络、代理） | 看 `app.log`；错误原因会随响应一起返回 |
@@ -735,7 +736,11 @@ sudo tail -f /var/log/nginx/error.log
 | CORS 报错 | `CORS_ORIGINS` 未改成生产域名 | 修改 `backend/.env` 后重启后端 |
 | **知识库状态 `count` 正常、检索却 0 条** | 重启后 collection 处于 `released`，未 `load` | 见 8.3「重启后的静默失效」 |
 | **灌库脚本报 `DataDirLockedError`** | Milvus Lite 是独占锁，后端正占着 | 见 8.3；改用 HTTP 灌库接口 |
-| **知识库页操作报 401 / 503** | 未配 `TRIPMIND_ADMIN_TOKEN`（503）或口令不对（401） | 见 10.2 |
+| **知识库页 / 账号管理页操作报 401 或 403** | 401 = 没登录或令牌过期；403 = 登录了但角色不够 | 见 10.2 |
+| **登录一直失败，密码明明是对的** | 触发登录节流了（按用户名 + 来源 IP 计数，默认 5 次锁 5 分钟） | 等几分钟，或重启后端（计数在内存里）见 10.2 |
+| **登不进去，而且不知道引导密码** | 引导账号只在**空库**时创建过一次 | `scripts/manage_users.py list` 看有哪些账号；`passwd` 重置。见 10.2 |
+| 启动日志出现 `no such column: user_id` | 老库迁移的索引建早了（已修，见 10.2 末尾那条警告） | 拉最新代码重启；不需要手动改库 |
+| 升级后历史行程里看不到老记录 | 老记录 `user_id` 为空（"无主"），普通用户看不到 | 这是**预期行为**；用管理员账号把范围切到「全部用户」 |
 | 知识库检索无结果、但不报错 | embedding 维度不匹配或未灌库 | `./venv/bin/python scripts/check_rag_env.py`，确认维度为 1024 |
 
 ---
@@ -767,52 +772,208 @@ sudo tail -f /var/log/nginx/error.log
 已在 `app/observability/metering.py` 的 `MeteredLLM._create_client()` 里
 关掉（`max_retries=0`），网络抖动类的重试交给前端对 5xx 的重试去做。
 
-### 10.2 管理口令（`TRIPMIND_ADMIN_TOKEN`）
+### 10.2 账号与登录（`/api/auth/*`）
 
-知识库的灌库/上传/删除、行程的修改/删除这些**写操作**接口，需要带
-`X-Admin-Token` 请求头，值等于 `backend/.env` 里的 `TRIPMIND_ADMIN_TOKEN`：
+**已取代原来的共享口令（`TRIPMIND_ADMIN_TOKEN`）。** 换的原因很直接：新的需求
+是「普通用户只看得到自己的行程，管理员看得到所有人的」—— 这句话里有一个**"谁"**，
+而共享口令没有主体，服务端无法回答"这条数据是不是他的"。
+
+#### 两种角色
+
+| 角色 | 能做什么 |
+|---|---|
+| `admin` | 管理账号、灌内置知识库 / 清库 / 切 RAG 开关、把历史行程切到「全部用户」、改写/删除任何人的行程 |
+| `user` | 生成行程、只看得到**自己**的行程、改写/删除自己的行程、**上传与管理自己的攻略** |
+
+行程详情接口 `GET /api/trip/plans/{id}` **仍然公开** —— 它是分享链接
+（`/share/{id}`）的数据源，需登录的话收到链接的人会先撞到登录页，分享功能就等于没有了。
+
+#### 页面与路由
+
+| 路径 | 是否需要登录 | 说明 |
+|---|---|---|
+| `/` | 否 | **落地页** —— 打开站点看到的第一个页面（有独立导航，不套应用外壳） |
+| `/register` `/login` | 否 | 注册 / 登录（同样是独立页面） |
+| `/app` | 是 | 规划首页（原来是 `/`，落地页上线后挪到这里） |
+| `/history` | 是 | 历史行程 |
+| `/create` | 是 | 创建行程（逐项设置） |
+| `/knowledge` | 是 | 知识库（每人管理自己上传的攻略；灌库 / RAG 开关仍是管理员专属） |
+| `/users` | 是 + 管理员 | 账号管理 |
+| `/result/:id` `/share/:id` | 否 | 行程详情 / 分享链接（**必须保持公开**） |
+
+> ⚠️ 改路由时注意：`/` 现在是**公开的落地页**。任何"把用户导回首页"的代码
+> 都应当指向 `/app`，否则刚登录的人会被送回产品介绍页。
+
+#### 知识库的归属（三层，规则不同）
+
+| 层 | 内容 | 谁看得到 |
+|---|---|---|
+| `poi_facts` | POI 库存（1750 条） | 全站共享 |
+| `city_guides` | 内置城市攻略 | 全站共享 |
+| `uploaded` | **用户上传的攻略** | **按人隔离**：只有上传者本人和管理员 |
+
+也就是说"普通用户也能用知识库"落到实现上是两件事：文档管理接口从管理员专属
+改成「登录即可 + 按归属判定」，以及**检索时把当前账号传下去**
+（`uploaded` 层加 `user_id` 过滤，见 `knowledge_service.user_filter`）。
+
+仍然只有管理员的三件事，它们动的是**全站共用资源**：
+
+- `POST /knowledge/ingest` —— 灌内置库（`recreate=true` 会 drop 掉所有人共用的 collection）
+- `GET /knowledge/ingest/{task_id}`
+- `POST /knowledge/rag-toggle` —— 进程级开关，拨一下影响所有人的行程生成
+
+> ⚠️ **未登录的检索必须排除 `uploaded` 层。**
+> `user_id=None` 在 SQL/Milvus 过滤里的语义是"**不过滤**"（管理员视角），
+> 如果未登录也走那条路，任何人不用登录就能搜到**所有人上传的攻略全文**。
+> 所以 `POST /knowledge/search` 未登录时只搜内置两层。
+
+归属落在两个地方，**两处都要一致**：SQLite 的 `knowledge_docs.user_id`（列表/查看/删除）
+与 Milvus 的动态字段 `user_id`（检索过滤）。写了但检索没带 = 别人搜得到你的攻略。
+
+> ⚠️ `doc_id` 必须**把上传者算进去**（`sha256(uploader + 正文)` 的前 12 位）。
+> 原来纯正文哈希在多人场景下是个 bug：两个用户传同一个文件会撞成同一条记录，
+> 后传的人被 `INSERT OR IGNORE` 静默忽略（他以为传成功了），
+> 而且 Milvus 里的归属会被 upsert 覆盖成后传的那个人。
+
+> ⚠️ **迁移**:`knowledge_docs` 加了 `user_id` 列,由 `_migrate()` 启动时自动补。
+> 已有的上传记录 `user_id` 为空 = "无主" —— **只有管理员看得到**,
+> 与行程那批老数据的处理方式一致。
+
+#### 自助注册
+
+首页「免费开始」通向 `POST /api/auth/register`，注册成功**直接返回登录令牌**
+（不必再登一次）。
 
 ```bash
-# 生成一个口令
-openssl rand -hex 24
+curl -X POST http://127.0.0.1:8001/api/auth/register \
+  -H 'Content-Type: application/json' \
+  -d '{"username":"zhangsan","password":"your-password"}'
+# → 201 {"token":"...","user":{"role":"user",...}}
 ```
 
-写进 `.env` 后重启后端，然后在网页**顶栏右上角的「管理口令」**填入同一个口令
-（只存在浏览器 sessionStorage，关标签页即失效）。
+三条写死的规矩（**都不是配置项**）：
 
-入口只有顶栏那一处，因为受保护的写操作分散在「历史行程」和「知识库」两个页面；
-按页面各放一个会让人以为是两套互不相干的东西。已设置时入口会变成品牌色并带一个绿点。
+1. **注册出来的一律是普通用户。** 请求体里**没有** `role` 字段，接口也不读它 ——
+   一旦注册能选角色，整套 RBAC 就没有意义了。管理员只能由已有管理员在
+   「账号管理」里创建。
+2. **注册即登录**，直接返回令牌。
+3. **只按 IP 节流**（默认 3 次失败 / 10 分钟锁 10 分钟），且与登录**分开计数**。
+   正常用户注册一次就成功，所以阈值给得比登录紧。
+   「用户名/密码不合法」**不计入**节流 —— 那是用户在改自己的输入，不是攻击行为。
 
-口令不对/没填时，前端会给出可操作的提示（"请点右上角「管理口令」重新设置"），
-而不是把后端的 detail 原样抛出来 —— 后端说的是"为什么被拒"，用户需要的是"点哪里"。
-
-**未配置该变量时，这些接口会返回 503 而不是放行** —— 有意做成 fail-closed：
-公开部署上"忘了配"不该等于"任何人都能清库"。本地开发想用知识库页，
-就把变量配上（值随意）。
-
-只读接口（`status` / `search` / `preview` / `sources` / 行程列表与详情）**不需要**口令，
-所以不带口令访问时前端的展示功能都正常。
-
-> ⚠️ 口令是明文走 HTTP 的。对外部署请先上 HTTPS（见 6.1），否则口令会
-> 在链路上可被截获，等于没设。
-
-#### 清单是两处写的，靠测试对齐
-
-后端在路由上挂 `dependencies=[Depends(require_admin)]`，前端在
-`frontend/src/services/api.ts` 的 `ADMIN_GUARDED` 里列同样的路径。两边对不上的
-**表现都是静默的**：
-
-- 后端挂了、前端没带 → 网页上调这个接口永远 401，而口令是对的（会让人去怀疑口令）
-- 前端带了、后端没挂 → 多一个自定义头，功能不受影响，一直不会有人发现
-
-所以 `backend/tests/test_admin_token_contract.py` 会解析前端的清单，和后端
-**真实路由表**双向比对（还顺带检查正则没写宽到命中公开接口）。
-改了一边没改另一边，这个测试会直接说清是漏了哪条、后果是什么。
+想临时改成邀请制：
 
 ```bash
-# 改完鉴权相关的代码，单独跑这一组先看
-cd backend && ./venv/Scripts/python.exe -m pytest tests/test_admin_token_contract.py -q
+# 根目录 .env（Docker）或 backend/.env（裸机）
+TRIPMIND_ALLOW_REGISTRATION=false
 ```
+
+关掉后接口回 **403**，登录不受影响。
+分享页里**不返回**归属信息（谁做的），管理员看详情时才会带上。
+
+#### 引导管理员
+
+第一次启动时，如果账号表是**空的**，服务端会自动建一个管理员：
+
+```bash
+# backend/.env（Docker 部署则是仓库根目录的 .env）
+TRIPMIND_ADMIN_USERNAME=admin          # 不配就是 admin
+TRIPMIND_ADMIN_PASSWORD=换成你自己的强密码   # 不配就是 admin123
+```
+
+> ⚠️ **默认密码 `admin123` 是已知弱口令，公开仓库里有它。** 它只在空库时生效
+> 一次（之后启动不会再动任何账号），但如果你先把服务跑起来、让别人访问了一会儿
+> 才想起来改，那个窗口就是敞开的。**生产部署请显式配 `TRIPMIND_ADMIN_PASSWORD`。**
+
+启动日志里会打印一行提示，说明引导账号建没建、用的是哪个密码来源。
+
+#### 登录与令牌
+
+登录用 `Authorization: Bearer <token>`。获取方式：
+
+```bash
+curl -X POST http://127.0.0.1:8001/api/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"username":"admin","password":"你的密码"}'
+# → {"token":"...","expires_at":"...","user":{"role":"admin",...}}
+```
+
+- 网页面板右上角是**账号入口**（用户名 + 角色徽标），菜单里有「修改密码 / 退出登录」，
+  管理员多一项「账号管理」（`/users`）。
+- 令牌存在浏览器 `localStorage`，默认有效期 **7 天**（`TRIPMIND_SESSION_TTL_HOURS`）。
+- 令牌在库里存的是 **SHA-256 摘要**，不是原文 —— 备份泄露也拿不到可直接用的会话。
+- **改密码 / 停用账号会立刻吊销该账号的全部会话**，不需要等令牌过期。
+- 登录连续失败会被节流（按用户名 + 来源 IP 两个维度），超限返回 **429**。
+
+#### 忘记管理员密码 / 需要脚本化建号
+
+```bash
+cd backend
+./venv/Scripts/python.exe scripts/manage_users.py list
+./venv/Scripts/python.exe scripts/manage_users.py passwd admin --password-stdin
+./venv/Scripts/python.exe scripts/manage_users.py add zhangsan --password secret123 --role admin
+```
+
+> ⚠️ 这个脚本**直接写 SQLite**，不走 HTTP。必须和运行中的服务指向同一个库
+> （容器里跑要进容器，或用同样的 `TRIPMIND_DB` 挂载）。库不对时表现在
+> "建好了但登录说密码错"，而不是报错。
+
+#### 401 与 403 的边界（排查时先看这个）
+
+| 码 | 含义 | 客户端的正确处理 |
+|---|---|---|
+| 401 | 没登录 / 令牌过期 / 被吊销 | 清本地令牌，跳登录页 |
+| 403 | 登录了，但角色不够（或这条行程不是你的） | 弹一句"没有权限"，**不要**跳登录页 |
+
+混成一个码的后果是：管理员之外的账号点开知识库会被踹回登录页，而他刚刚登录完 —— 看起来像"登录坏了"。
+
+#### 权限清单靠测试对齐
+
+后端的权限挂在路由依赖上（`require_user` / `require_admin_role`），
+`backend/tests/test_auth.py` 里有一份**金名单**，用真实路由表双向比对：
+漏挂一个 `require_admin_role`，那个接口就对所有登录用户开放了，而所有功能测试**还是绿的**。
+
+```bash
+# 改完鉴权相关的代码，单独跑这两组先看
+cd backend && ./venv/Scripts/python.exe -m pytest tests/test_auth.py -q
+```
+
+> 旧设计里"前后端两份受保护清单必须逐条对上"那一类测试**没有替代品**：
+> 新设计下前端不再维护清单（登录态对每个请求都成立），
+> 所以那个失效模式本身消失了。
+
+#### 端到端自查（需要先起一个后端）
+
+```bash
+# 起一个独立库的临时后端（不要打 8001，那是开发用的）
+cd backend
+TRIPMIND_DB=./data/_auth_check.db ./venv/Scripts/python.exe -m uvicorn app.api.main:app --port 8002
+
+# 另开一个终端：52 项检查，覆盖匿名/普通用户/管理员三种身份的访问边界
+E2E_DB=./data/_auth_check.db ./venv/Scripts/python.exe scripts/check_auth_e2e.py
+```
+
+> ⚠️ 脚本里**显式禁用了 HTTP 代理**（`ProxyHandler({})`）。本机开发环境常常
+> 设了 `http_proxy`，而 urllib 会把 `127.0.0.1` 的请求也走代理 —— 代理不认识
+> 那个端口就回 **502 Bad Gateway**，看起来像"我的服务崩了"，其实请求压根没到服务上。
+
+#### 对老库的迁移
+
+账号体系给 `plans` 表加了一列 `user_id`。**已部署的库里那张表已经存在**，
+所以走的是 `app/store/db.py` 的 `_migrate()`（`ALTER TABLE ADD COLUMN`），
+启动时自动执行、幂等。
+
+- 迁移**不需要**手动操作，也不需要停机准备。
+- 迁移前留下的行程 `user_id` 为 `NULL`（"无主"）：**普通用户看不到，管理员在
+  「全部行程」里看得到**。这是刻意的 —— 与其猜"它应该算谁的"，不如显式要求管理员介入。
+- 删除账号**不会**删掉那些行程，只把归属置空。原因是行程里带着真实的 LLM 成本记录，
+  而成本是历史页顶部的聚合数字：顺手抹掉会让"这个月花了多少"随时间缩水。
+
+> ⚠️ `_migrate()` 里的索引必须在 `ALTER TABLE` **之后**建。把
+> `CREATE INDEX ... (user_id)` 写进 `SCHEMA` 会让老库启动时直接抛
+> `no such column: user_id` —— 那是**启动即失败**，连登录页都打不开。
+> `tests/test_auth.py::Test老库迁移` 钉住了这一条（断言新库与老库迁移后
+> 建出的表结构完全一致）。
 
 ---
 

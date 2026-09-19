@@ -4,7 +4,7 @@ import json
 import logging
 import re
 import time
-from typing import List, Optional
+from typing import List, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
@@ -18,7 +18,7 @@ from ...models.schemas import (
     PlanSummary,
 )
 from ..errors import handle_service_errors, to_http_error
-from ..deps import require_admin
+from ..deps import can_access_plan, get_current_user, is_admin, require_user
 from ...agents.trip_planner_agent import get_trip_planner_agent
 from ...observability import collect_usage, make_observer
 from ...services.llm_service import get_llm
@@ -29,40 +29,56 @@ router = APIRouter(prefix="/trip", tags=["旅行规划"])
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# 哪些端点要管理口令(与 knowledge.py 的规则一致:写操作要,读操作不要)
+# 每个端点的可见范围(取代原来的管理口令)
 # ---------------------------------------------------------------------------
 #
-#   要口令:PUT    /plans/{plan_id}   覆盖别人的行程内容
-#          DELETE /plans/{plan_id}   删掉别人的行程
+#   公开:POST /plan? 不 —— 生成行程现在**要求登录**,因为它要落一个归属。
+#           未登录就没有"是谁的"这个答案,只能落成无主记录,而那种记录
+#           用户自己在历史页看不见(等于生成完就丢了),体验更差。
+#           所以前端在未登录时会把用户引到登录页,而不是让他白等两分钟。
+#        GET  /plans/{plan_id}  **保持公开** —— 分享链接用的就是它。
+#           这是明确的产品设定:分享出去的行程要给不认识的人看,
+#           而 id 是 uuid4().hex(32 位随机)猜不到。
+#        GET  /health 公开。
 #
-#   不要口令:POST /plan              核心功能,不加就等于网站不能用了
-#            GET  /plans             列表 —— 前端「历史行程」页要用
-#            GET  /plans/{plan_id}   详情 —— **分享链接用的就是这个接口**,
-#                                    加口令等于分享功能失效(产品设定如此)
-#            GET  /health
+#   仅本人或管理员:PUT /plans/{id}、DELETE /plans/{id}
 #
-# ⚠️ 这里有个**已知且有意接受**的取舍,写清楚免得以后被当成疏漏:
+#   GET /plans:登录可见,但**范围随角色变**(scope=mine|all)。
 #
-#   `GET /plans` 会把所有行程的 id 列出来。plan_id 本身是 uuid4().hex
-#   (32 位随机)猜不到,但这个列表把随机性抹平了 —— 也就是说
-#   "拿到列表 → 读/改/删任意行程"这条链是通的,只是后半段现在被口令挡住了。
+# ⚠️ 这里有一个**已知且有意保留**的信息暴露,写清楚免得以后被当成疏漏:
 #
-#   为什么不干脆把 `GET /plans` 也加上口令?
-#   因为它就是前端「历史行程」页的数据源,加了口令这个页面就废了。
-#   而项目**没有用户体系**(行程靠链接分享是产品设定),所以也说不出
-#   "只列你自己的" —— 服务端根本不知道你是谁。
+#   分享链接 /share/{id} 打开的那份行程详情里,只要请求者不是管理员,
+#   就**不带**归属字段(`user_id` / `owner_username` 都是 null)。
+#   从"分享这类产品的常识"出发,透露"这条行程属于谁"没有任何好处。
+#   管理员看详情时会带上 —— 那是管理界面需要的信息(谁建的、要不要追责)。
 #
-#   结论:读接口保持公开、写接口全部上锁。要彻底解决就得引入用户体系,
-#   那超出这个项目的范围了。
+#   也就是说"通过分享链接能读到一个陌生人的行程内容"这件事仍然成立。
+#   它是**产品功能**,不是漏洞;真要堵就得下掉分享,那是另一个决定。
+
+
+def _owner_fields(user: Optional[dict]) -> dict:
+    """归属字段的**覆盖字典** —— 直接 `{**row, **_owner_fields(user)}` 展开进 PlanSummary。
+
+    非管理员一律返回 `{user_id: None, owner_username: None}`,把行里读到的
+    真实归属压掉。刻意给 null 而不是一个 `"已隐藏"` 之类的占位字符串:
+    占位值会让前端需要额外判断"这个字符串是不是真的用户名",而 null 的语义
+    是明确的 —— **这个字段对你不适用**。
+
+    管理员返回空字典(不覆盖),行里的真实值原样透出。
+    """
+    if is_admin(user):
+        return {}
+    return {"user_id": None, "owner_username": None}
+
 
 
 @router.post(
     "/plan",
     response_model=TripPlanResponse,
     summary="生成旅行计划",
-    description="根据用户输入的旅行需求,生成详细的旅行计划"
+    description="根据用户输入的旅行需求,生成详细的旅行计划。需要登录,行程归属当前账号。"
 )
-def plan_trip(request: TripRequest):
+def plan_trip(request: TripRequest, user: dict = Depends(require_user)):
     """
     生成旅行计划
 
@@ -75,6 +91,9 @@ def plan_trip(request: TripRequest):
 
     Args:
         request: 旅行请求参数
+        user: 当前登录账号(依赖注入)。**鉴权发生在路由依赖里,也就是
+            在这几十秒的生成开始之前** —— 未登录的请求不会先花两分钟
+            跑完模型再被拒。
 
     Returns:
         旅行计划响应
@@ -99,8 +118,10 @@ def plan_trip(request: TripRequest):
         # 先落一条 status='running' 的记录再开始生成。
         # 这样 plan_id 提前确定,而且不存在"生成完了但没存住"的窗口
         # —— 中途崩了库里也留得下痕迹,而不是凭空消失。
-        plan_id = store.create_running(request)
-        print(f"🆔 plan_id: {plan_id}")
+        # 归属**在这里**就写进去:中途崩掉的那条 running 记录也带着归属,
+        # 管理员才能在列表里看出"谁的这次生成中断了"。
+        plan_id = store.create_running(request, user_id=user["id"])
+        print(f"🆔 plan_id: {plan_id} (账号: {user['username']})")
 
         print("🚀 开始生成旅行计划...")
         observer = make_observer(enabled=True)
@@ -113,7 +134,14 @@ def plan_trip(request: TripRequest):
         t0 = time.perf_counter()
         with collect_usage() as usage:
             trip_plan = agent.plan_trip(
-                request, observer=observer, knowledge_sink=knowledge_hits
+                request,
+                observer=observer,
+                knowledge_sink=knowledge_hits,
+                # 知识库按人隔离:检索时只带「内置层 + 自己上传的」。
+                # 传用户名下的 id,而不是 user(整个对象)—— agent 层只需要
+                # 一个归属标识,把账号字典递进去会让"能不能看"这类判断
+                # 有机会渗到不该渗的层。
+                user_id=user["id"],
             )
         latency_ms = int((time.perf_counter() - t0) * 1000)
 
@@ -444,26 +472,52 @@ def parse_intent(request: ParseIntentRequest):
     "/plans",
     response_model=PlanListResponse,
     summary="历史行程列表",
-    description="按创建时间倒序返回已生成的行程,附带累计用量统计"
+    description=(
+        "按创建时间倒序返回行程,附带累计用量统计。"
+        "scope=all 只有管理员可用;普通账号固定只看得到自己的。"
+    ),
 )
 @handle_service_errors("读取历史行程")
-def list_plans(limit: int = 50, offset: int = 0):
+def list_plans(
+    limit: int = 50,
+    offset: int = 0,
+    scope: Literal["mine", "all"] = "mine",
+    user: dict = Depends(require_user),
+):
     """历史行程列表。
 
     Args:
         limit: 返回条数上限(1-200)
         offset: 偏移量,用于分页
+        scope: `mine` 只看自己的;`all` 看全部 —— **仅管理员**,否则 403。
+            默认 `mine` 是有意的:默认值必须是**最保守**的那个。
+            如果默认是 all,那么一个漏传参数的客户端(比如改版到一半的
+            前端、或者老的调用脚本)会静默地拿到全站数据 —— 而漏传参数
+            恰恰是最常见的改动事故。
+
+    ⚠️ 权限判断放在**这里**而不是靠 store 的 user_id 参数:
+    `list_plans(user_id=None)` 的语义是"不过滤",那是一个能拿到全部数据的
+    调用 —— 它必须出现在管理员分支里,而不是写在默认路径上。
     """
     store = get_plan_store()
     limit = max(1, min(int(limit), 200))
     offset = max(0, int(offset))
 
-    rows = store.list_plans(limit=limit, offset=offset)
+    if scope == "all" and not is_admin(user):
+        raise HTTPException(status_code=403, detail="只有管理员可以查看全部用户的行程。")
+
+    # 管理员看全部时传 None(不过滤);否则锁死在自己的 id 上。
+    # 注意这里**不是** "if is_admin: None else user.id" —— 那样管理员
+    # 就看不到 scope=mine 了。两个维度是独立的:角色决定"允许看什么范围",
+    # scope 决定"这次想看哪个范围"。
+    owner_filter = None if scope == "all" else user["id"]
+
+    rows = store.list_plans(limit=limit, offset=offset, user_id=owner_filter)
     return PlanListResponse(
         success=True,
         message=f"共 {len(rows)} 条",
-        data=[PlanSummary(**r) for r in rows],
-        stats=store.stats(),
+        data=[PlanSummary(**{**r, **_owner_fields(user)}) for r in rows],
+        stats=store.stats(user_id=owner_filter),
     )
 
 
@@ -471,13 +525,20 @@ def list_plans(limit: int = 50, offset: int = 0):
     "/plans/{plan_id}",
     response_model=PlanDetailResponse,
     summary="行程详情",
-    description="按 id 取单个行程的完整内容。分享链接用的就是这个接口。"
+    description=(
+        "按 id 取单个行程的完整内容。**公开** —— 分享链接用的就是这个接口,"
+        "匿名可读。归属信息只在管理员请求时返回。"
+    ),
 )
-def get_plan_detail(plan_id: str):
+def get_plan_detail(plan_id: str, user: Optional[dict] = Depends(get_current_user)):
     """行程详情。
 
     注意 status='running' 的记录也会返回 —— 前端可以据此显示
     "该行程生成中断"。这与列表接口不同(列表默认隐藏 running)。
+
+    ⚠️ 这里用的是 `get_current_user`(可选)而不是 `require_user`:
+    分享链接必须能匿名打开。需要登录的话,`/share/{id}` 这个页面
+    对收到链接的人就是一句"请先登录" —— 分享功能等于没有了。
     """
     store = get_plan_store()
     row = store.get_plan(plan_id)
@@ -502,10 +563,21 @@ def get_plan_detail(plan_id: str):
         usage_source=row["usage_source"],
         warnings=row["warnings"] or [],
     )
+    # 归属**只给管理员**。非管理员时保持模型默认值 null —— 也就是说
+    # 从分享链接进来的陌生人看不到"这条行程是谁做的"。
+    if is_admin(user):
+        meta.user_id = row["user_id"]
+        meta.owner_username = row["owner_username"]
 
     # 知识出处一起返回。没开 RAG / 没命中 / 记录不存在时,store 返回空列表 ——
     # 前端据此决定显不显示那张卡片,不需要额外判断。
     knowledge = store.get_knowledge(plan_id)
+
+    # "能不能编辑"由**服务端**算好给前端。前端自己算不出来:归属字段对
+    # 非管理员是隐藏的,所以它无法判断"这是不是我的行程"。
+    # 不给这个字段的话,匿名打开别人的 /result/{id} 会看到「编辑行程」按钮,
+    # 点了才 403 —— 既困惑又多余。
+    editable = can_access_plan(user, row)
 
     if plan is None:
         return PlanDetailResponse(
@@ -514,10 +586,16 @@ def get_plan_detail(plan_id: str):
             data=None,
             meta=meta,
             knowledge=knowledge,
+            can_edit=editable,
         )
 
     return PlanDetailResponse(
-        success=True, message="获取成功", data=plan, meta=meta, knowledge=knowledge
+        success=True,
+        message="获取成功",
+        data=plan,
+        meta=meta,
+        knowledge=knowledge,
+        can_edit=editable,
     )
 
 
@@ -525,32 +603,55 @@ def get_plan_detail(plan_id: str):
     "/plans/{plan_id}",
     response_model=PlanDetailResponse,
     summary="更新行程内容",
-    description="保存前端编辑后的行程(增删景点、调整顺序)。不改动成本统计。",
-    dependencies=[Depends(require_admin)],
+    description="保存前端编辑后的行程(增删景点、调整顺序)。不改动成本统计。本人或管理员。",
 )
-def update_plan(plan_id: str, plan: TripPlan):
-    """回写编辑后的行程。"""
+def update_plan(plan_id: str, plan: TripPlan, user: dict = Depends(require_user)):
+    """回写编辑后的行程。
+
+    ⚠️ 权限判定的顺序,以及为什么 404 先于 403
+    ------------------------------------------------
+    先查存在性(不存在 → 404),再判归属(不是自己的 → 403)。
+
+    反过来的话会**泄露行程是否存在**:别人的 plan_id 试过来拿到 403、
+    不存在的拿到 404,这两者的差别就是一个"哪些 id 是真的"的探针。
+    而 plan_id 是 32 位随机串,本来猜不到 —— 顺序写反等于把这个性质抹掉了。
+
+    代价是"别人的行程"和"不存在的行程"返回了不同的码,但那个信息只在
+    **id 确实存在**的情况下才有意义,而 id 已经是猜不到的了。
+    """
     store = get_plan_store()
+    row = store.get_plan(plan_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="行程不存在或已被删除")
+    if not can_access_plan(user, row):
+        raise HTTPException(status_code=403, detail="只能修改自己的行程。")
+
     if not store.update_plan_json(plan_id, plan):
         raise HTTPException(status_code=404, detail="行程不存在或已被删除")
 
-    row = store.get_plan(plan_id)
+    refreshed = store.get_plan(plan_id)
     return PlanDetailResponse(
         success=True,
         message="已保存",
-        data=TripPlan(**row["plan"]),
+        data=TripPlan(**refreshed["plan"]),
     )
 
 
 @router.delete(
     "/plans/{plan_id}",
     summary="删除行程",
-    description="从历史记录中永久删除一个行程",
-    dependencies=[Depends(require_admin)],
+    description="从历史记录中永久删除一个行程。本人或管理员。",
 )
-def delete_plan(plan_id: str):
+def delete_plan(plan_id: str, user: dict = Depends(require_user)):
     """删除行程。"""
-    if not get_plan_store().delete_plan(plan_id):
+    store = get_plan_store()
+    row = store.get_plan(plan_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="行程不存在或已被删除")
+    if not can_access_plan(user, row):
+        raise HTTPException(status_code=403, detail="只能删除自己的行程。")
+
+    if not store.delete_plan(plan_id):
         raise HTTPException(status_code=404, detail="行程不存在或已被删除")
     return {"success": True, "message": "已删除", "data": {"id": plan_id}}
 

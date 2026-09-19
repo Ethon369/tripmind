@@ -80,66 +80,13 @@ PLANNER_AGENT_PROMPT = """你是行程规划专家。你的任务是根据景点
 
 请严格按照以下JSON格式返回旅行计划:
 ```json
-{
-  "city": "城市名称",
-  "start_date": "YYYY-MM-DD",
-  "end_date": "YYYY-MM-DD",
-  "days": [
-    {
-      "date": "YYYY-MM-DD",
-      "day_index": 0,
-      "description": "第1天行程概述",
-      "transportation": "交通方式",
-      "accommodation": "住宿类型",
-      "hotel": {
-        "name": "酒店名称",
-        "address": "酒店地址",
-        "location": {"longitude": 116.397128, "latitude": 39.916527},
-        "price_range": "300-500元",
-        "rating": "4.5",
-        "distance": "距离景点2公里",
-        "type": "经济型酒店",
-        "estimated_cost": 400
-      },
-      "attractions": [
-        {
-          "name": "景点名称",
-          "address": "详细地址",
-          "location": {"longitude": 116.397128, "latitude": 39.916527},
-          "visit_duration": 120,
-          "description": "景点详细描述",
-          "category": "景点类别",
-          "ticket_price": 60
-        }
-      ],
-      "meals": [
-        {"type": "breakfast", "name": "早餐推荐", "description": "早餐描述", "estimated_cost": 30},
-        {"type": "lunch", "name": "午餐推荐", "description": "午餐描述", "estimated_cost": 50},
-        {"type": "dinner", "name": "晚餐推荐", "description": "晚餐描述", "estimated_cost": 80}
-      ]
-    }
-  ],
-  "weather_info": [
-    {
-      "date": "YYYY-MM-DD",
-      "day_weather": "晴",
-      "night_weather": "多云",
-      "day_temp": 25,
-      "night_temp": 15,
-      "wind_direction": "南风",
-      "wind_power": "1-3级"
-    }
-  ],
-  "overall_suggestions": "总体建议",
-  "budget": {
-    "total_attractions": 180,
-    "total_hotels": 1200,
-    "total_meals": 480,
-    "total_transportation": 200,
-    "total": 2060
-  }
-}
+{"city":"城市名称","start_date":"YYYY-MM-DD","end_date":"YYYY-MM-DD","days":[{"date":"YYYY-MM-DD","day_index":0,"description":"第1天行程概述","transportation":"交通方式","accommodation":"住宿类型","hotel":{"name":"酒店名称","address":"酒店地址","location":{"longitude":116.397128,"latitude":39.916527},"price_range":"300-500元","rating":"4.5","distance":"距离景点2公里","type":"经济型酒店","estimated_cost":400},"attractions":[{"name":"景点名称","address":"详细地址","location":{"longitude":116.397128,"latitude":39.916527},"visit_duration":120,"description":"景点描述","category":"景点类别","ticket_price":60}],"meals":[{"type":"breakfast","name":"早餐推荐","description":"早餐描述","estimated_cost":30},{"type":"lunch","name":"午餐推荐","description":"午餐描述","estimated_cost":50},{"type":"dinner","name":"晚餐推荐","description":"晚餐描述","estimated_cost":80}]}],"weather_info":[{"date":"YYYY-MM-DD","day_weather":"晴","night_weather":"多云","day_temp":25,"night_temp":15,"wind_direction":"南风","wind_power":"1-3级"}],"overall_suggestions":"总体建议","budget":{"total_attractions":180,"total_hotels":1200,"total_meals":480,"total_transportation":200,"total":2060}}
 ```
+
+⚠️ **上面的示例是「压缩格式」,请照这个样子输出 —— 整个 JSON 写在一行里,
+不要缩进、不要为了好看而换行。** 这不是风格偏好:缩进和换行会占掉
+大量输出 token(实测约 15%),而它们对解析结果毫无影响。
+本项目一次生成的输出直接决定用户等多久 —— 输出慢,人就会走。
 
 **重要提示:**
 1. weather_info数组必须包含每一天的天气信息
@@ -153,7 +100,15 @@ PLANNER_AGENT_PROMPT = """你是行程规划专家。你的任务是根据景点
    - 餐饮预估费用(estimated_cost)
    - 酒店预估费用(estimated_cost)
    - 预算汇总(budget)包含各项总费用
+8. **文字要短**:每条 `description` 控制在 30 字以内,`overall_suggestions`
+   控制在 80 字以内。用户要看的是"今天去哪、怎么走",不是导游词。
+   —— 这些字数同样直接换成用户的等待时间。
 """
+
+# ⚠️ 上面 `PLANNER_AGENT_PROMPT` 里那段 JSON **刻意不换行**。
+#    改它的时候不要为了源码好看去格式化它:模型会模仿示例的排版,
+#    示例缩进 → 输出缩进 → 约 15% 的输出 token 花在空白上。
+#    (Python 的三引号字符串支持隐式拼接,但你拆行就会把换行写进 JSON。)
 
 
 class MultiAgentTripPlanner:
@@ -234,6 +189,7 @@ class MultiAgentTripPlanner:
         request: TripRequest,
         observer: NullObserver | None = None,
         knowledge_sink: list[dict] | None = None,
+        user_id: str | None = None,
     ) -> TripPlan:
         """
         使用多智能体协作生成旅行计划
@@ -317,7 +273,7 @@ class MultiAgentTripPlanner:
                 print("📚 步骤3.5: 检索知识库...")
                 obs.stage_start("retrieval")
                 knowledge_context = self._retrieve_knowledge(
-                    request, obs, sink=knowledge_sink
+                    request, obs, sink=knowledge_sink, user_id=user_id
                 )
                 obs.stage_end("retrieval")
 
@@ -373,6 +329,7 @@ class MultiAgentTripPlanner:
         request: TripRequest,
         obs: NullObserver,
         sink: list[dict] | None = None,
+        user_id: str | None = None,
     ) -> str:
         """检索知识库并拼成 prompt 片段。**检索不到就返回空串。**
 
@@ -390,7 +347,9 @@ class MultiAgentTripPlanner:
         """
         try:
             service = get_knowledge_service()
-            hits = service.retrieve_for_request(request)
+            # user_id 决定「别人上传的攻略能不能进你的行程」——
+            # 传 None 会检索到全站所有上传内容(管理员视角)。
+            hits = service.retrieve_for_request(request, user_id=user_id)
         except Exception as exc:
             print(f"⚠️  知识库检索失败,本次跳过: {type(exc).__name__}: {exc}")
             obs.stage_response("retrieval", f"(检索失败: {type(exc).__name__})")

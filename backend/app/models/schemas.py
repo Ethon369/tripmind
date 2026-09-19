@@ -247,6 +247,21 @@ class PlanSummary(BaseModel):
     attractions: int = Field(default=0, description="景点总数")
     total_budget: int = Field(default=0, description="行程总预算(元)")
 
+    # ---- 归属 ----
+    #
+    # ⚠️ 这两个字段**只有管理员看得到**,由路由决定填不填(见
+    #    `api/routes/trip.py` 的 `_owner_fields()`)。放在同一个模型里而不是
+    #    拆两个模型,是因为 PlanSummary 会被前端多处复用,拆开会让
+    #    "列表项"这个类型分裂成两套,而它们 20 个字段里只差 2 个。
+    #
+    #    分享链接走的是同一个接口。如果无条件返回归属,任何人打开一条
+    #    分享链接都能看到"这是谁做的" —— 而分享出去的行程**本来就是**
+    #    打算给不认识的人看的。所以默认是 None(不返回)。
+    user_id: Optional[str] = Field(default=None, description="归属账号 id;非管理员时为 null")
+    owner_username: Optional[str] = Field(
+        default=None, description="归属账号的用户名;非管理员或已注销时为 null"
+    )
+
 
 class PlanStats(BaseModel):
     """历史页顶部的聚合数字。"""
@@ -296,6 +311,16 @@ class PlanDetailResponse(BaseModel):
     knowledge: List[KnowledgeSource] = Field(
         default_factory=list,
         description="这次生成检索到的知识出处(按相关度降序)。没开 RAG 或没命中时为空数组",
+    )
+    can_edit: bool = Field(
+        default=False,
+        description=(
+            "当前请求者能不能改写这份行程(本人或管理员)。"
+            "**由服务端算好给前端**,因为前端算不出来:归属字段对非管理员是隐藏的"
+            "(见 PlanSummary 里的说明),所以前端无法自己判断'这是不是我的'。"
+            "不给这个字段的话,普通人打开别人的行程会看到一排「编辑」按钮,"
+            "点了才 403 —— 那种交互既困惑也多余。"
+        ),
     )
 
 

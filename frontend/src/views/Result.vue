@@ -8,9 +8,16 @@
       </a-button>
 
       <div class="rh-actions">
-        <!-- 分享模式下整组编辑/删除按钮都不出现（不是禁用 ——
-             别人打开链接看到的应该是一份干净的行程，而不是一排点不动的按钮） -->
-        <template v-if="!editMode && !isShareMode">
+        <!-- 编辑按钮的显示条件有三个，缺一不可：
+             1. 不在编辑态（编辑态显示的是「保存 / 取消」）
+             2. 不是分享模式（别人打开链接看到的该是一份干净的行程，
+                而不是一排点不动的按钮）
+             3. **canEdit** —— 服务端说这个人有权改（本人或管理员）。
+                它必须来自服务端：归属字段对非管理员是隐藏的，
+                前端无法自己判断"这是不是我的行程"。
+                缺了这一条的症状是：匿名或别人打开 /result/{id} 时看到
+                「编辑行程」，点进去改了半天才在保存时拿到 403。 -->
+        <template v-if="!editMode && !isShareMode && canEdit">
           <a-button @click="toggleEdit">
             <template #icon><EditOutlined /></template>
             <span class="rh-btn-text">编辑行程</span>
@@ -229,6 +236,7 @@ import { usePlanCache } from '@/composables/usePlanCache';
 import { usePlanExport } from '@/composables/usePlanExport';
 import { useScreen } from '@/composables/useScreen';
 import { useUnsavedGuard } from '@/composables/useUnsavedGuard';
+import { useAuth } from '@/composables/useAuth';
 import { getPlan, updatePlan } from '@/services/api';
 import { amapJsKey, amapSecurityCode } from '@/config/runtime';
 import type {
@@ -293,6 +301,20 @@ const dayMarkers = new Map<number, any[]>();
 const planId = computed(() => (route.params.id as string) || '');
 const isShareMode = computed(() => route.path.startsWith('/share'));
 const shareUrl = computed(() => `${window.location.origin}/share/${planId.value}`);
+
+/**
+ * 能不能编辑这份行程。**以服务端返回的 `can_edit` 为准**（加载中默认 false）。
+ *
+ * 不在前端自己判断，理由见 `types/index.ts` 里 `can_edit` 的说明：
+ * 归属字段对非管理员是隐藏的，前端根本没有判断依据。
+ *
+ * 默认 false 而不是 true：加载中、加载失败、以及 sessionStorage 回退路径
+ * （后端没返回过 `can_edit`）都不该给出一个点了会失败的按钮。
+ */
+const canEdit = ref(false);
+
+/** 登录态，只用于"本地缓存那条路径"的判断（见 load() 路径 2）。 */
+const { isAuthenticated } = useAuth();
 
 const totalAttractions = computed(
   () => tripPlan.value?.days?.reduce((n, d) => n + (d.attractions?.length || 0), 0) ?? 0
@@ -387,6 +409,10 @@ async function load() {
       const res = await getPlan(id);
       if (res.success && res.data) {
         meta.value = res.meta || null;
+        // 服务端算好的"能不能改"。加载成功时必须**赋值**（含 false）——
+        // 只在为 true 时赋值会让上一次成功加载的 true 留下来，
+        // 于是从上一条自己的行程跳到别人的行程时，编辑按钮还在。
+        canEdit.value = res.can_edit === true;
         // 知识出处跟着详情一起回来。没开 RAG / 没命中时后端给空数组
         knowledgeSources.value = res.knowledge || [];
         await renderPlan(res.data);
@@ -408,9 +434,14 @@ async function load() {
   // ---- 路径 2：无 id，回落本地缓存 ----
   const cached = planCache.load();
   if (!cached) {
-    router.replace('/');
+    router.replace('/app');
     return;
   }
+  // 这条路径没有 plan_id（详情还在 sessionStorage 里），保存只写本地缓存、
+  // 不会发请求，所以"能不能编辑"由登录态决定：没登录的人看到的应该是一份
+  // 只读行程。用登录态而不是直接 `true` —— 登出之后还留着编辑按钮，
+  // 与"未登录不能生成/不能改"的整体约定不一致。
+  canEdit.value = isAuthenticated.value;
   await renderPlan(cached);
 }
 
@@ -557,7 +588,7 @@ async function copyShareLink() {
   }
 }
 
-const goBack = () => router.push('/');
+const goBack = () => router.push('/app');
 const goHistory = () => router.push('/history');
 
 /* ---------------- 地图 ---------------- */

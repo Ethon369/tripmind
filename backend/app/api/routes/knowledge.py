@@ -28,6 +28,7 @@
 那个是一次 LLM 调用约 60 秒,这个要 55 次网络请求。
 """
 
+import hashlib
 import threading
 import time
 import uuid
@@ -41,39 +42,119 @@ from ...config import get_settings, rag_state, set_rag_enabled
 from ...services.doc_parser import ParseError, chunk_document, parse_file, parse_paste
 from ...services.knowledge_service import EMBED_BATCH, get_knowledge_service
 from ...store.doc_store import DocStore
-from ..deps import require_admin
+from ..deps import get_current_user, is_admin, require_admin_role, require_user
 
 router = APIRouter(prefix="/knowledge", tags=["知识库"])
 
 # ---------------------------------------------------------------------------
-# 哪些端点要管理口令,以及为什么这么分
+# 哪些端点要什么权限
 # ---------------------------------------------------------------------------
 #
-# **写操作一律要口令**(`dependencies=[Depends(require_admin)]`),
-# **读操作一律不要**。判断标准是"这个调用能不能让服务端的状态发生变化":
+# **只有管理员**:操作的是全站共用资源或进程级开关,不该由一个人替所有人决定
 #
-#   要口令:POST /ingest          灌库/清库(recreate 会 drop collection)
-#          GET  /ingest/{id}      灌库任务状态(与上面成对,一并挡掉)
-#          POST /docs/parse       上传文件解析(未鉴权上传 = 磁盘与 CPU 风险)
-#          POST /docs/{id}/ingest 把上传的攻略入库(消耗 embedding 额度)
-#          GET  /docs             列出已上传的攻略(可能含用户私有内容)
-#          GET  /docs/{id}        看某篇攻略的分块
-#          DELETE /docs/{id}      删除上传的攻略
-#          POST /rag-toggle       运行时开关 RAG
+#   POST /ingest            灌内置库(POI + 城市攻略)/ 清库(recreate 会 drop collection)
+#   GET  /ingest/{id}       灌库任务状态(与上面成对)
+#   POST /rag-toggle        运行时开关 RAG(**进程级**,影响所有人的生成)
 #
-#   不要口令:GET  /status          前端知识库页首屏就要用
-#            POST /search          知识库检索调试台,只读
-#            POST /ingest/preview  只统计条数,不写库不花钱
-#            GET  /sources         内置数据源只读统计
+# **登录即可,按归属判定**(本人或管理员)
+#
+#   POST /docs/parse            上传解析(归属 = 当前账号)
+#   POST /docs/{id}/ingest      把上传的攻略入库(消耗 embedding 额度)
+#   GET  /docs                  列表 —— 默认只看自己的;scope=all 仅管理员
+#   GET  /docs/{id}             看某篇的分块
+#   DELETE /docs/{id}           删除
+#
+# **公开,但检索范围随登录状态变**
+#
+#   GET  /status            页面首屏状态
+#   POST /search            检索调试台 —— 登录后能搜到"内置层 + 自己的";
+#                           **未登录只搜内置层**,否则任何人都能搜到别人
+#                           上传的攻略全文,按人隔离就白做了
+#   POST /ingest/preview    只统计内置库条数,不写库不花钱
+#   GET  /sources           内置数据源只读统计
 #
 # ⚠️ 上线时实测确认过:这些接口在公网上是**直接可达**的(nginx 的
 #    `location /api/` 无条件转发),所以不是"内网才需要考虑"的问题。
 #
-# 未配置 TRIPMIND_ADMIN_TOKEN 时这些端点返回 503 而不是放行 ——
-# 理由见 app/api/deps.py。所以本地开发要用知识库页,也得在 .env 里配一个值。
+# 权限边界的判断依据从共享口令 → 账号 → 按人隔离,一共变过三次,
+# 但那条标准从来没变:**这个调用能不能改到别人的东西**。
 
 NamespaceFilter = Literal["all", "poi_facts", "city_guides", "uploaded"]
 IngestSource = Literal["frozen", "guides", "all"]
+DocScope = Literal["mine", "all"]
+
+
+# ---------------------------------------------------------------------------
+# 知识库的归属
+# ---------------------------------------------------------------------------
+#
+# 知识库现在是**三层**,归属规则各不相同 —— 这是这一节最要紧的事:
+#
+#   poi_facts     POI 库存       全站共享,谁都能检索到
+#   city_guides   内置城市攻略    全站共享,谁都能检索到
+#   uploaded      **用户上传的**  **按人隔离**:只有上传者本人和管理员看得到
+#
+# 所以"普通用户也能用知识库"落到代码上是两件事:
+#   1. 文档管理接口从"管理员专属"改成"登录即可 + 按归属判定";
+#   2. 检索时把当前账号传下去,`uploaded` 层加过滤(见 `knowledge_service.user_filter`)。
+#
+# 仍然**只有管理员**的三件事:灌内置库、清库(recreate)、切全局 RAG 开关。
+# 它们操作的是**全站共用**的 collection 与进程级开关,让普通人碰等于让一个人
+# 替所有人做决定 —— 那不叫"拥有知识库功能",那叫"拥有别人的知识库"。
+
+
+def _owner_filter(user: dict[str, Any], scope: str = "mine") -> Optional[str]:
+    """文档列表/统计要用的归属过滤值。
+
+    - 管理员 + `scope=all` → None(不过滤,看全部)
+    - 其余一律 → 自己的 id
+
+    ⚠️ 返回 None 的语义是"**不过滤**",也就是说那个调用能看到全站数据 ——
+    所以它**必须**只出现在管理员分支里。这与 `PlanStore.list_plans` 是同一套
+    约定,不要在这里发明第三种写法。
+    """
+    if is_admin(user) and scope == "all":
+        return None
+    return user["id"]
+
+
+def _can_touch_doc(user: dict[str, Any], doc: dict[str, Any]) -> bool:
+    """这个账号能不能查看/删除/入库这篇文档。**本人或管理员。**
+
+    无主文档(`user_id IS NULL`,账号体系上线前上传的那批)**只有管理员能动** ——
+    与行程的规则保持一致:与其猜"它应该算谁的",不如显式要求管理员介入。
+
+    注意管理员**不能**通过这个函数获得"替别人上传"的能力(那需要伪造归属),
+    这里只管"能不能操作已存在的那一篇"。
+    """
+    if is_admin(user):
+        return True
+    owner = doc.get("user_id")
+    return bool(owner) and owner == user.get("id")
+
+
+def _scoped_doc_id(user: dict[str, Any], content_hash: str) -> str:
+    """把上传者混进 doc_id。
+
+    ⚠️ **这是按人隔离能成立的前提,不是可选的美化。**
+
+    原来的 doc_id 是正文哈希的前 12 位,那时的注释写着"同一份内容 → 同一个
+    doc_id → 同一批 chunk id,所以重复上传不会越堆越多"。那条性质在**单用户**
+    场景下是对的,但多人共用之后它会变成一个 bug:
+
+        两个用户上传同一个文件 → 撞成同一个 doc_id → 第二个人的
+        `create_pending` 被 `INSERT OR IGNORE` 静默忽略 → 他的文档列表里
+        什么都没有,而他明明看到"上传成功";
+
+    更糟的是 Milvus 那边的 chunk id 也相同,于是 upsert 会**把第一个人的
+    归属改写成第二个人** —— 谁最后传,这批向量就算谁的。
+
+    把 owner 混进哈希之后,幂等性变成"**同一个人**传同一份内容不会重复",
+    这才是原本想要的那条性质。已有的老记录 id 不变(它们是 content-hash-only),
+    继续以"无主"的形式存在。
+    """
+    raw = f"{user['id']}:{content_hash}".encode("utf-8")
+    return hashlib.sha256(raw).hexdigest()[:12]
 
 # ===========================================================================
 # 响应模型
@@ -225,6 +306,9 @@ class DocSummary(BaseModel):
     error: Optional[str] = None
     created_at: str
     ingested_at: Optional[str] = None
+    # 上传者。**只有管理员看得到**(普通用户的列表本来就全是自己的,
+    # 带上它没有信息量,还会让人误以为能改)。与 PlanSummary 的约定一致。
+    user_id: Optional[str] = None
 
 
 class DocListResponse(BaseModel):
@@ -335,7 +419,7 @@ def _public_task(task: dict) -> dict:
 # ===========================================================================
 
 
-def _collect_status(service, with_counts: bool) -> dict:
+def _collect_status(service, with_counts: bool, user: dict | None = None) -> dict:
     settings = get_settings()
     # 读 rag_state() 而不是 settings.enable_rag:后者看不到业务流程的运行时覆盖
     state = rag_state()
@@ -365,18 +449,34 @@ def _collect_status(service, with_counts: bool) -> dict:
         for ns in service.ALL_NAMESPACES:
             payload[ns] = stats.get(ns) or {}
 
-        docs_summary = DocStore().summary()
-        payload["docs"] = docs_summary
+        # 上传文档的统计**跟着账号走** —— 普通用户看到的是自己那几篇。
+        # 未登录则不给这项:它是"某个人的东西"的聚合,对陌生访客没有意义,
+        # 而给一个全站合计又等于把别人有多少资料泄露出去。
+        if user is None:
+            docs_summary = None
+            payload["docs"] = None
+            payload["uploaded"] = {
+                "collection": settings.rag_collection_uploaded,
+                "exists": (stats.get("uploaded") or {}).get("exists"),
+                "count": None,
+            }
+        else:
+            # 管理员看全站(owner=None 表示不过滤),普通用户看自己的。
+            docs_summary = DocStore().summary(
+                user_id=None if is_admin(user) else user["id"]
+            )
+            payload["docs"] = docs_summary
 
         # uploaded 层的计数**刻意用 SQLite 的,不用 Milvus 的 row_count**:
         # Milvus 删除之后、compaction 之前,row_count 仍把已删的行算在内 ——
         # 实测删完 3 块它还显示 3。而 SQLite 里记录的是「入库时写了哪些块」,
         # 删除时同步清掉,是精确值。用户删完攻略看到计数不变,一定会以为没删掉。
-        payload["uploaded"] = {
-            "collection": settings.rag_collection_uploaded,
-            "exists": (stats.get("uploaded") or {}).get("exists"),
-            "count": docs_summary["ingested"]["chunks"],
-        }
+        if docs_summary is not None:
+            payload["uploaded"] = {
+                "collection": settings.rag_collection_uploaded,
+                "exists": (stats.get("uploaded") or {}).get("exists"),
+                "count": docs_summary["ingested"]["chunks"],
+            }
 
     return payload
 
@@ -390,13 +490,15 @@ def _collect_status(service, with_counts: bool) -> dict:
         "以及上传文档的概览。with_counts=false 时跳过计数(更快),用于页面首屏。"
     ),
 )
-def knowledge_status(with_counts: bool = True):
+def knowledge_status(
+    with_counts: bool = True, user: Optional[dict] = Depends(get_current_user)
+):
     service = get_knowledge_service()
     settings = get_settings()
     state = rag_state()
     try:
         # 计数要连 Milvus,给它一个上限;超时也不能让页面卡住
-        return _collect_status(service, with_counts)
+        return _collect_status(service, with_counts, user)
     except Exception as exc:
         # 状态接口**不应该 500** —— 它本身就是用来报告「哪里坏了」的。
         # 连它都返回 500,前端就只能显示「加载失败」,反而看不到真正的原因。
@@ -429,7 +531,22 @@ def knowledge_status(with_counts: bool = True):
     summary="检索知识库",
     description="按 query 检索指定层;namespace=all 时三层归并后按分数降序",
 )
-def knowledge_search(body: SearchRequest):
+def knowledge_search(
+    body: SearchRequest, user: Optional[dict] = Depends(get_current_user)
+):
+    """检索。**公开,但范围随登录状态变。**
+
+    - 登录用户:内置两层 + **自己上传的**
+    - 未登录:内置两层(**刻意排除 `uploaded`**)
+
+    ⚠️ 未登录那条分支不能偷懒写成"传 `user_id=None` 就不过滤":
+       `None` 在 `user_filter()` 里的语义是**不过滤**,也就是把
+       **所有人上传的攻略全文**都搜出来。那不是"未登录少看一点",
+       而是把按人隔离整个绕过去了。所以这里显式排掉 `uploaded` 层。
+
+    这个接口保持公开是有意的:它是知识库页面的检索调试台,而内置两层
+    是公共知识,本来就能给所有人看。
+    """
     query = (body.query or "").strip()
     if not query:
         raise HTTPException(status_code=400, detail="query 不能为空")
@@ -437,16 +554,27 @@ def knowledge_search(body: SearchRequest):
     service = get_knowledge_service()
     t0 = time.perf_counter()
 
+    # 未登录 → 只看得到内置两层;登录 → 再加上自己那一层。
+    allowed = list(service.ALL_NAMESPACES)
+    if user is None:
+        allowed = [ns for ns in allowed if ns != "uploaded"]
+    owner = user["id"] if user else None
+
+    if body.namespace != "all" and body.namespace not in allowed:
+        raise HTTPException(status_code=403, detail="登录后才能检索自己上传的攻略。")
+
     # 检索前清掉上一轮的 last_error —— 它是实例属性,
     # 不清的话上一次的失败原因会一直跟着后续成功的检索显示出来。
     service.last_error = None
 
     try:
         if body.namespace == "all":
-            hits = service.retrieve_merged(query, body.top_k)
+            hits = service.retrieve_merged(
+                query, body.top_k, user_id=owner, namespaces=allowed
+            )
         else:
             k = int(body.top_k or get_settings().rag_top_k)
-            hits = service.retrieve(query, body.namespace, k)
+            hits = service.retrieve(query, body.namespace, k, user_id=owner)
             hits.sort(key=lambda h: h.score, reverse=True)
     except Exception as exc:
         # retrieve 内部已经吞了异常,能走到这里说明是更外层的问题
@@ -455,10 +583,10 @@ def knowledge_search(body: SearchRequest):
     elapsed_ms = int((time.perf_counter() - t0) * 1000)
 
     # 各层的条数,供前端区分「库是空的」和「确实没命中」。
-    # 遍历 ALL_NAMESPACES 而不是手写 —— 加层时漏改这里的症状是:
-    # 检索能搜到上传的内容,但计数里永远没有 uploaded 这一项。
+    # 遍历 `allowed` 而不是 ALL_NAMESPACES:未登录时不该出现 uploaded 那一项 ——
+    # 否则界面上会写着"上传层 12 条"而结果里一条都没有,像是检索坏了。
     namespace_counts: dict[str, int] = {}
-    for ns in service.ALL_NAMESPACES:
+    for ns in allowed:
         try:
             namespace_counts[ns] = service.store(ns).count()
         except Exception:
@@ -626,7 +754,7 @@ def _run_ingest(task_id: str, source: IngestSource, recreate: bool) -> None:
     "/ingest",
     response_model=IngestTaskResponse,
     status_code=202,
-    dependencies=[Depends(require_admin)],
+    dependencies=[Depends(require_admin_role)],
     summary="开始灌库（后台任务）",
     description=(
         "在后台线程里执行灌库,立即返回 task_id,用 GET /knowledge/ingest/{task_id} 轮询进度。"
@@ -692,7 +820,7 @@ def knowledge_ingest(body: IngestRequest):
 @router.get(
     "/ingest/{task_id}",
     response_model=IngestTaskResponse,
-    dependencies=[Depends(require_admin)],
+    dependencies=[Depends(require_admin_role)],
     summary="查询灌库任务",
     description="前端按 2 秒左右的间隔轮询这个接口获取进度",
 )
@@ -766,18 +894,19 @@ def _doc_chunk_previews(doc: dict[str, Any]) -> list[DocChunkPreview]:
 @router.post(
     "/docs/parse",
     response_model=DocParseResponse,
-    dependencies=[Depends(require_admin)],
     summary="解析一篇上传的攻略（不入库）",
     description=(
         "上传 Markdown / 纯文本 / PDF(需有文字层)/ 图片(png、jpg、webp 等),或直接粘贴文字。"
         "图片会由视觉模型识别成文字 —— 里面没有文字的图(风景照)会被明确拒绝。"
         "返回切块预览与预估 embedding 次数;确认后调 POST /docs/{id}/ingest 真正入库。"
+        "**解析出来的攻略归上传者所有** —— 只有本人和管理员看得到,也只参与本人的行程生成。"
     ),
 )
 async def knowledge_doc_parse(
     file: Optional[UploadFile] = File(default=None),
     text: Optional[str] = Form(default=None),
     title: str = Form(default=""),
+    user: dict = Depends(require_user),
 ):
     settings = get_settings()
     max_bytes = int(getattr(settings, "max_upload_bytes", 5 * 1024 * 1024))
@@ -812,17 +941,21 @@ async def knowledge_doc_parse(
         raise HTTPException(status_code=400, detail="请上传文件,或在文本框里粘贴攻略内容。")
 
     doc_store = _get_doc_store()
-    existing = doc_store.get(parsed.doc_id, with_content=False)
+    # ⚠️ doc_id 必须**把上传者算进去**,不能直接用 parsed.doc_id(纯正文哈希)。
+    #    否则两个用户传同一个文件会撞成同一条记录,后者被静默忽略、
+    #    Milvus 里的归属还会被覆盖成后传的人。详见 `_scoped_doc_id`。
+    doc_id = _scoped_doc_id(user, parsed.content_hash)
+    existing = doc_store.get(doc_id, with_content=False)
 
     # **已存在的记录一律不覆盖** —— 这不是偷懒,是正确性问题:
-    # 同一份内容 → 同一个 doc_id → 同一批 chunk id。
+    # 同一份内容 + 同一个上传者 → 同一个 doc_id → 同一批 chunk id。
     # 如果这里把它重置回 pending 并清掉 chunk_ids,
     # 那条记录就再也删不掉向量库里的块了(症状:删了,检索还能搜到)。
     # 所以:没有就插一条 pending;有就保持原样,预览照样给用户看。
     if existing is None:
         doc_store.create_pending(
             {
-                "id": parsed.doc_id,
+                "id": doc_id,
                 "title": parsed.title,
                 "origin": parsed.origin,
                 "content": parsed.text,
@@ -830,12 +963,14 @@ async def knowledge_doc_parse(
                 "char_count": parsed.char_count,
                 "chunk_count": parsed.chunk_count,
                 "chunk_ids": [],
+                # 归属在这里落库。后面所有读写的归属判定都以它为准。
+                "user_id": user["id"],
             }
         )
 
     return DocParseResponse(
         success=True,
-        doc_id=parsed.doc_id,
+        doc_id=doc_id,
         title=parsed.title,
         origin=parsed.origin,
         char_count=parsed.char_count,
@@ -900,6 +1035,10 @@ def _run_doc_ingest(task_id: str, doc_id: str) -> None:
             doc_id=doc_id,
             title=doc["title"],
             chunks=chunks,
+            # 归属写进 Milvus 的动态字段 —— 检索时靠它做按人隔离。
+            # 用**记录里的** user_id 而不是当前请求者的:入库任务在后台线程里
+            # 跑,那时已经没有"当前请求"这个概念了。
+            user_id=doc.get("user_id"),
             progress_cb=set_progress,
         )
         chunk_ids = result.get("chunk_ids") or []
@@ -942,14 +1081,13 @@ def _run_doc_ingest(task_id: str, doc_id: str) -> None:
     "/docs/{doc_id}/ingest",
     response_model=IngestTaskResponse,
     status_code=202,
-    dependencies=[Depends(require_admin)],
     summary="入库一篇攻略（后台任务）",
     description=(
         "把 parse 过的文档写入向量库,返回 task_id 用 GET /knowledge/ingest/{task_id} 轮询。"
-        "成功后会自动开启 ENABLE_RAG(运行时覆盖,重启恢复)。"
+        "成功后会自动开启 ENABLE_RAG(运行时覆盖,重启恢复)。**本人或管理员**。"
     ),
 )
-def knowledge_doc_ingest(doc_id: str):
+def knowledge_doc_ingest(doc_id: str, user: dict = Depends(require_user)):
     global _RUNNING
 
     doc_store = _get_doc_store()
@@ -959,6 +1097,10 @@ def knowledge_doc_ingest(doc_id: str):
             status_code=404,
             detail="这篇文档不存在（可能已被删除）。请重新上传。",
         )
+    # 404 先于 403:拿别人的 doc_id 试,不该能从状态码区分"存在"与"不存在"。
+    # 与行程的写权限判定保持同一个顺序。
+    if not _can_touch_doc(user, doc):
+        raise HTTPException(status_code=403, detail="只能操作自己上传的攻略。")
 
     with _TASKS_LOCK:
         # 与灌库共用同一把单飞锁:两者写的都是 Milvus,并发会互相干扰
@@ -1002,29 +1144,49 @@ def knowledge_doc_ingest(doc_id: str):
 @router.get(
     "/docs",
     response_model=DocListResponse,
-    dependencies=[Depends(require_admin)],
     summary="列出上传的攻略",
+    description="默认只列**自己**上传的;scope=all 看全部(仅管理员)。",
 )
-def knowledge_doc_list(limit: int = 100):
+def knowledge_doc_list(
+    limit: int = 100,
+    scope: DocScope = "mine",
+    user: dict = Depends(require_user),
+):
+    """上传攻略列表。
+
+    `scope` 默认 `mine` —— 与行程列表同一个约定:默认值必须**最保守**,
+    漏传参数的客户端(改版到一半的前端、老脚本)会静默拿到别人的数据。
+    所以"看全部"只能显式请求,而且仅管理员。
+    """
+    if scope == "all" and not is_admin(user):
+        raise HTTPException(status_code=403, detail="只有管理员可以查看所有人的攻略。")
+
+    owner = _owner_filter(user, scope)
     doc_store = _get_doc_store()
     return DocListResponse(
         success=True,
-        docs=[DocSummary(**d) for d in doc_store.list_docs(limit)],
-        summary=doc_store.summary(),
+        # 管理员看全部时把归属也带上 —— 否则列表里分不清哪些是谁的
+        docs=[DocSummary(**d) for d in doc_store.list_docs(limit, user_id=owner)],
+        summary=doc_store.summary(user_id=owner),
     )
 
 
 @router.get(
     "/docs/{doc_id}",
     response_model=DocDetailResponse,
-    dependencies=[Depends(require_admin)],
     summary="查看一篇上传攻略的分块",
+    description="本人或管理员。",
 )
-def knowledge_doc_detail(doc_id: str):
+def knowledge_doc_detail(doc_id: str, user: dict = Depends(require_user)):
     doc_store = _get_doc_store()
     doc = doc_store.get(doc_id)
     if doc is None:
         raise HTTPException(status_code=404, detail="这篇文档不存在。")
+    # ⚠️ 这一条不能省:分块里是**攻略全文**。
+    #    少了它,任何人只要有一个 doc_id 就能读到别人上传的整篇攻略 ——
+    #    列表按归属过滤了也白搭(doc_id 是 12 位十六进制,不难撞)。
+    if not _can_touch_doc(user, doc):
+        raise HTTPException(status_code=403, detail="只能查看自己上传的攻略。")
 
     chunks = _doc_chunk_previews(doc)
     # 全文不回传 —— 分块拼起来就是全文,没必要再传一份大的。
@@ -1036,15 +1198,16 @@ def knowledge_doc_detail(doc_id: str):
 @router.delete(
     "/docs/{doc_id}",
     response_model=DocDeleteResponse,
-    dependencies=[Depends(require_admin)],
     summary="删除一篇上传攻略",
-    description="同时删除向量库里属于它的所有分块。先删向量库,再删记录。",
+    description="本人或管理员。同时删除向量库里属于它的所有分块。先删向量库,再删记录。",
 )
-def knowledge_doc_delete(doc_id: str):
+def knowledge_doc_delete(doc_id: str, user: dict = Depends(require_user)):
     doc_store = _get_doc_store()
     doc = doc_store.get(doc_id, with_content=False)
     if doc is None:
         raise HTTPException(status_code=404, detail="这篇文档不存在。")
+    if not _can_touch_doc(user, doc):
+        raise HTTPException(status_code=403, detail="只能删除自己上传的攻略。")
 
     service = get_knowledge_service()
     try:
@@ -1070,7 +1233,7 @@ def knowledge_doc_delete(doc_id: str):
 @router.post(
     "/rag-toggle",
     response_model=RagToggleResponse,
-    dependencies=[Depends(require_admin)],
+    dependencies=[Depends(require_admin_role)],
     summary="开启/关闭知识库（运行时）",
     description=(
         "运行时覆盖 ENABLE_RAG,不写回 .env —— 评测基线不受影响,重启后恢复 .env 的值。"
